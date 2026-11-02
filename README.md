@@ -211,6 +211,30 @@ If the connection does drop, three layers handle it:
    (`PersistentTimestampOutdated`) and the gap is dropped — those messages are
    gone. Nothing can fix that retroactively.
 
+### Knowing when it stopped
+
+`NOTIFY_ON_STOP=1` (default) posts one line to the log chat when the bot shuts
+down **gracefully**:
+
+```
+[STOPPED] forwarding stopped (SIGTERM)
+```
+
+`SIGINT` is Ctrl+C, `SIGTERM` is `systemctl stop` / `kill`, `SIGHUP` is
+`tmux kill-session` or a dying terminal. The message is sent *before* the client
+disconnects, so it works while the account is offline.
+
+What it cannot do, and no code can:
+
+- **A dead process cannot send anything.** `kill -9`, an OOM kill, a seedbox
+  reboot or a power cut leave no notice — the notice is the last thing the
+  process does, and those paths skip it.
+- If the network is already gone at shutdown time, the send fails silently.
+
+For those cases use systemd's `Restart=always` (above) plus `NOTIFY_ON_START=1`:
+a `[STARTED]` line with no `[STOPPED]` before it means the previous run died hard.
+That pair is the only reliable way to spot a silent death.
+
 ### screen or tmux?
 
 Both survive SSH drops; **tmux** is the better choice (actively maintained, real

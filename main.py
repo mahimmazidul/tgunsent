@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 
+import asyncio
 import json
 import os
+import signal
 
 from dotenv import load_dotenv
 from pyrogram import Client, enums, raw, utils
@@ -80,6 +82,14 @@ try:
     LINK_PREVIEW = {"link_preview_options": LinkPreviewOptions(is_disabled=True)}
 except Exception:
     LINK_PREVIEW = {"disable_web_page_preview": True}
+
+# Announce lifecycle events in the log chat. A stopped process cannot send
+# anything, so only graceful stops can be reported (Ctrl+C, SIGTERM from
+# systemctl stop, SIGHUP from tmux kill-session). SIGKILL and power loss cannot.
+NOTIFY_ON_STOP = (os.getenv("NOTIFY_ON_STOP") or "1").strip().lower() in (
+    "1", "true", "yes", "on")
+NOTIFY_ON_START = (os.getenv("NOTIFY_ON_START") or "0").strip().lower() in (
+    "1", "true", "yes", "on")
 
 # Media kinds we can re-send straight from a file_id, mapped to the client method.
 MEDIA_METHODS = {
@@ -423,6 +433,42 @@ async def on_raw_update(client, update, users, chats):
 
 
 # --------------------------------------------------------------------------- #
+# lifecycle notice: "[STOPPED] forwarding stopped" on a graceful shutdown
+# --------------------------------------------------------------------------- #
+async def serve():
+    """
+    Start the client, wait for a stop signal, announce it while still connected,
+    then stop. A hard kill cannot reach this code, so nothing is sent then.
+    """
+    await app.start()
+
+    if NOTIFY_ON_START:
+        await send_log("[STARTED] forwarding resumed")
+
+    stop = asyncio.Event()
+    fired = {"name": "shutdown"}
+
+    def on_signal(signum, _frame=None):
+        fired["name"] = signal.Signals(signum).name
+        stop.set()
+
+    loop = asyncio.get_event_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        try:
+            loop.add_signal_handler(sig, on_signal, sig)
+        except (NotImplementedError, RuntimeError) as error:
+            print(f"[lifecycle] cannot hook {sig!r}: {error}")
+
+    try:
+        await stop.wait()
+    finally:
+        if NOTIFY_ON_STOP:
+            # Sent before the client goes away; skipped if the network is gone.
+            await send_log(f"[STOPPED] forwarding stopped ({fired['name']})")
+        await app.stop()
+
+
+# --------------------------------------------------------------------------- #
 # startup
 # --------------------------------------------------------------------------- #
 if __name__ == "__main__":
@@ -439,4 +485,4 @@ if __name__ == "__main__":
         print("DEBUG is on: every message prints chat=<id> from=<user id>. Send "
               "something in the group you want to log to, then copy chat=<id> "
               "into LOG_CHAT_ID.")
-    app.run()
+    app.loop.run_until_complete(serve())
