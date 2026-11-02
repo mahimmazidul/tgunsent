@@ -1,24 +1,4 @@
 #!/usr/bin/env python3
-"""
-Single-file Pyrogram userbot that watches ONE target user (TARGET_USER_ID) and
-re-publishes what they do into LOG_CHAT_ID as log messages that THIS account
-owns, so those log messages can always be edited later.
-
-Ideas borrowed from the two reference projects:
-  * kawaiiDango/telegram-delete-logger -> keep an id-keyed cache of everything
-    we saw (text / media) so a bare delete update can be resolved afterwards.
-  * phishdestroy/TgWitness            -> capture the content yourself instead of
-    relying on Telegram forwarding, so "protected content" stops mattering.
-
-CASE 1  new text message        -> "[NEW] <text>"
-CASE 2  edited message          -> "[EDITED] Before: ... / After: ..."
-CASE 3  photo/video/document    -> media re-sent with caption "[NEW - photo]"
-CASE 4  message deleted         -> the cached log message is edited and
-                                   prefixed with "[DELETED]"
-
-There is no forward_messages() call anywhere in this file: every log message is
-a brand new message we send ourselves, using a file_id for media.
-"""
 
 import json
 import os
@@ -35,20 +15,46 @@ LOG_CHAT_ID = int(os.getenv("LOG_CHAT_ID") or 0)
 
 CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache.json")
 
-# Realistic Telegram Desktop headers. Default Pyrogram headers are fingerprinted.
-CLIENT_HEADERS = {
-    "app_version": "9.3.3",
-    "device_model": "Linux Desktop",
-    "system_version": "Ubuntu 22.04",
+# One single, self-consistent Telegram Desktop identity. Telegram compares these
+# strings with lang_pack during login, so they must describe one real client.
+FINGERPRINT = {
+    "device_model": "Desktop",
+    "system_version": "Windows 10",
+    "app_version": "5.12.3 x64",
     "lang_code": "en",
     "system_lang_code": "en-US",
+    "lang_pack": "tdesktop",
 }
+
+client_options = {k: v for k, v in FINGERPRINT.items() if k != "lang_pack"}
 try:
-    app = Client("userbot", api_id=API_ID, api_hash=API_HASH, **CLIENT_HEADERS)
+    app = Client("userbot", api_id=API_ID, api_hash=API_HASH, **client_options)
 except TypeError:
-    # Pyrogram 2.0.106 has no system_lang_code parameter; all other headers apply.
-    CLIENT_HEADERS.pop("system_lang_code", None)
-    app = Client("userbot", api_id=API_ID, api_hash=API_HASH, **CLIENT_HEADERS)
+    # Some Pyrogram builds do not expose system_lang_code on Client.
+    client_options.pop("system_lang_code", None)
+    app = Client("userbot", api_id=API_ID, api_hash=API_HASH, **client_options)
+
+
+def patch_init_connection():
+    """
+    Pyrogram hardcodes lang_pack="" and system_lang_code=lang_code in
+    pyrogram/session/session.py, which no official app ever sends. Rewrite those
+    two fields so the handshake matches the fingerprint above.
+    """
+    try:
+        original = raw.functions.InitConnection
+
+        def init_connection(**kwargs):
+            kwargs["lang_pack"] = FINGERPRINT["lang_pack"]
+            kwargs["system_lang_code"] = FINGERPRINT["system_lang_code"]
+            return original(**kwargs)
+
+        raw.functions.InitConnection = init_connection
+    except Exception as error:
+        print(f"[fingerprint] lang_pack patch skipped: {error}")
+
+
+patch_init_connection()
 
 # Primary cache: "<namespace>:<message_id>" -> entry dict.
 # cache.json is only a mirror; this dict is what the bot reads from.
