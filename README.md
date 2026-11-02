@@ -54,24 +54,49 @@ real client. Stock Pyrogram sends `device_model="CPython 3.13.x"`,
 `system_lang_code = lang_code` — a fingerprint no official app produces.
 
 `FINGERPRINT` in `main.py` holds one consistent Telegram Desktop identity
-(`Desktop` / `Windows 10` / `5.12.3 x64` / `en` / `en-US` / `tdesktop`).
-Pyrogram itself cannot send `lang_pack` (it is hardcoded in
-`pyrogram/session/session.py`), so `patch_init_connection()` rewrites
-`lang_pack` and `system_lang_code` on the outgoing `InitConnection` before the
-session starts. Because the session file stores the auth key, changing these
-values on an existing `userbot.session` is not needed — they are sent on every
-connection.
+(`Desktop` / `Windows 10` / `5.12.3 x64` / `en` / `en-US` / `tdesktop`) and is
+passed straight to `Client()`. `patch_init_connection()` then rewrites
+`lang_pack` and `system_lang_code` on the outgoing `InitConnection` so the exact
+strings go out, because stock Pyrogram hardcodes those two fields and Pyrofork
+lowercases them (`en-US` → `en-us`). Both paths are tested.
 
 If you want generated, randomised official-client fingerprints for every field,
 that is what [opentele2](https://github.com/thedemons/opentele) does — but it is
-Telethon-based, so it cannot be mixed into this Pyrogram script. This script
-instead keeps one fixed, self-consistent profile.
+Telethon-based, so it cannot be mixed into this script.
+
+## Pyrofork vs Pyrogram
+
+`requirements.txt` installs **Pyrofork** (`pyrofork==2.3.69`), a maintained fork
+of Pyrogram. It installs the same `pyrogram` package, so `main.py` needs no
+changes; it just adds `lang_pack` / `system_lang_code` as real `Client`
+arguments, plus topics, stories, quote replies and an optional Mongo session
+store. Notes:
+
+- **Do not install both libraries in one venv** — each ships a package named
+  `pyrogram` and they will overwrite each other.
+- Requires **Python >= 3.10**; use `tgcrypto-pyrofork` for the AES speedup.
+- Extra transitive dependency `pymediainfo-pyrofork` (pure Python, used only for
+  media groups / paid media).
+- The upstream GitHub repo was **archived in mid-2026** and the last PyPI release
+  is 2.3.69 (Dec 2025), so treat it as frozen rather than actively developed.
+- Pin and verify if you care about supply chain:
+  `pyrofork==2.3.69 --hash=sha256:13f7a7fbfa5ede230df6b6df10fcc2c6b33b4c3d75bf2088a7d32f41621df8e4`
+  (the wheel published on PyPI).
+
+A static review of that wheel found no backdoor: the only outbound socket is
+`asyncio.open_connection` in `connection/transport/tcp/tcp.py`, aimed at
+Telegram DC addresses (or your own proxy); there are no reads of `os.environ` or
+`~`, no `eval`/`exec`/`subprocess`/`pickle`, no HTTP client, no bundled
+binaries, and the crypto/session/storage modules differ from upstream Pyrogram
+only by licence headers and ordinary features. That is evidence, not a
+guarantee — read the source if your threat model demands it.
 
 ## Files
 
 | File | Purpose |
 | --- | --- |
 | `main.py` | The whole bot (flat functions, one handler per case). |
+| `requirements.txt` | Pyrofork + tgcrypto + python-dotenv (see the swap note inside). |
 | `.env` | Secrets; never commit it. |
 | `cache.json` | Message cache, written after every change. |
 | `userbot.session` | Pyrogram's SQLite login session; keep it private. |

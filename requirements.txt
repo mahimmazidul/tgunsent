@@ -1,3 +1,12 @@
-pyrogram==2.0.106
-tgcrypto
+# Pyrofork: maintained fork of Pyrogram. Same `import pyrogram`, same API,
+# and it accepts lang_pack / system_lang_code natively. Needs Python >= 3.10.
+pyrofork==2.3.69
+# AES speedup. tgcrypto-pyrofork provides the same `tgcrypto` module.
+tgcrypto-pyrofork
 python-dotenv
+
+# Alternative: swap the two lines above for stock Pyrogram (unmaintained since
+# 2023, and it cannot send lang_pack at all). Do NOT install both at once, they
+# both ship a package called "pyrogram".
+# pyrogram==2.0.106
+# tgcrypto

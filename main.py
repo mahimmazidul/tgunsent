@@ -26,20 +26,21 @@ FINGERPRINT = {
     "lang_pack": "tdesktop",
 }
 
-client_options = {k: v for k, v in FINGERPRINT.items() if k != "lang_pack"}
 try:
-    app = Client("userbot", api_id=API_ID, api_hash=API_HASH, **client_options)
+    # Pyrofork (and future Pyrogram builds) accept lang_pack and system_lang_code.
+    app = Client("userbot", api_id=API_ID, api_hash=API_HASH, **FINGERPRINT)
 except TypeError:
-    # Some Pyrogram builds do not expose system_lang_code on Client.
-    client_options.pop("system_lang_code", None)
-    app = Client("userbot", api_id=API_ID, api_hash=API_HASH, **client_options)
+    # Stock Pyrogram 2.0.106 does not: those two fields get patched in below.
+    options = {k: v for k, v in FINGERPRINT.items()
+               if k not in ("lang_pack", "system_lang_code")}
+    app = Client("userbot", api_id=API_ID, api_hash=API_HASH, **options)
 
 
 def patch_init_connection():
     """
-    Pyrogram hardcodes lang_pack="" and system_lang_code=lang_code in
-    pyrogram/session/session.py, which no official app ever sends. Rewrite those
-    two fields so the handshake matches the fingerprint above.
+    Stock Pyrogram hardcodes lang_pack="" and system_lang_code=lang_code in
+    pyrogram/session/session.py, and Pyrofork lowercases everything it is given
+    ("en-US" becomes "en-us"). Rewriting the payload keeps the exact strings.
     """
     try:
         original = raw.functions.InitConnection
