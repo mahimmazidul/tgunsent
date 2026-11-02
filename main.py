@@ -65,6 +65,15 @@ patch_init_connection()
 # cache.json is only a mirror; this dict is what the bot reads from.
 cache = {}
 
+# kurigram deprecates disable_web_page_preview in favour of link_preview_options;
+# stock Pyrogram only knows the old flag. Pick whichever this install supports.
+try:
+    from pyrogram.types import LinkPreviewOptions
+
+    LINK_PREVIEW = {"link_preview_options": LinkPreviewOptions(is_disabled=True)}
+except Exception:
+    LINK_PREVIEW = {"disable_web_page_preview": True}
+
 # Media kinds we can re-send straight from a file_id, mapped to the client method.
 MEDIA_METHODS = {
     "photo": "send_photo",
@@ -106,6 +115,12 @@ def save_cache():
 # --------------------------------------------------------------------------- #
 # small helpers
 # --------------------------------------------------------------------------- #
+def dbg(text):
+    """Print diagnostics only when DEBUG=1."""
+    if DEBUG:
+        print(f"[dbg] {text}")
+
+
 def cache_key(chat, message_id):
     """
     Key layout:
@@ -147,9 +162,7 @@ def content_of(message):
 async def send_log(text):
     """Send one fresh log message. Never raises."""
     try:
-        return await app.send_message(
-            LOG_CHAT_ID, text[:4096], disable_web_page_preview=True
-        )
+        return await app.send_message(LOG_CHAT_ID, text[:4096], **LINK_PREVIEW)
     except Exception as error:
         print(f"[log] send failed: {error}")
         return None
@@ -176,6 +189,7 @@ async def log_new_text(message, key):
         return
     # We store OUR log message id, not the original one: that is the message we
     # are allowed to edit later when CASE 4 fires.
+    dbg(f"cached new text id={message.id} as {key} -> log message {sent.id}")
     cache[key] = {
         "log_chat": LOG_CHAT_ID,
         "log_id": sent.id,
@@ -217,11 +231,14 @@ async def log_new_media(message, key, kind):
 async def on_new_message(client, message):
     """CASE 1 (text) and CASE 3 (media) for the target user."""
     try:
-        if DEBUG:
-            sender = message.from_user.id if message.from_user else "channel/anonymous"
-            print(f"[dbg] message  chat={message.chat.id} ({message.chat.type}) "
-                  f"from={sender} id={message.id}")
+        sender = message.from_user.id if message.from_user else "channel/anonymous"
+        dbg(f"message chat={message.chat.id} ({message.chat.type}) "
+            f"from={sender} id={message.id}")
+        if message.chat and message.chat.id == LOG_CHAT_ID:
+            dbg(f"skip id={message.id}: it is inside the log chat")
+            return
         if not is_target(message):
+            dbg(f"skip id={message.id}: sender is not TARGET_USER_ID")
             return
         key = cache_key(message.chat, message.id)
         kind = media_kind_of(message)
@@ -240,9 +257,8 @@ async def on_new_message(client, message):
 async def on_edited_message(client, message):
     """CASE 2: a brand new log message, never an edit of the previous log."""
     try:
-        if DEBUG:
-            sender = message.from_user.id if message.from_user else "channel/anonymous"
-            print(f"[dbg] edited   chat={message.chat.id} from={sender} id={message.id}")
+        sender = message.from_user.id if message.from_user else "channel/anonymous"
+        dbg(f"edited chat={message.chat.id} from={sender} id={message.id}")
         if not is_target(message):
             return
         key = cache_key(message.chat, message.id)
@@ -278,6 +294,7 @@ async def mark_deleted(key):
         return
     entry["deleted"] = True
     was = entry.get("text") or "media"
+    dbg(f"delete matched {key} -> editing log message {entry.get('log_id')}")
     try:
         if entry.get("kind") == "text":
             await app.edit_message_text(
@@ -299,12 +316,13 @@ async def mark_deleted(key):
 async def on_raw_update(client, update, users, chats):
     """CASE 4: Telegram never names the deleter; we only match ids from our cache."""
     try:
-        if DEBUG:
-            print(f"[dbg] raw      {type(update).__name__} "
-                  f"chat={getattr(update, 'channel_id', '-')} "
-                  f"ids={list(getattr(update, 'messages', []) or [])}")
+        if not isinstance(update, (raw.types.UpdateDeleteMessages,
+                                  raw.types.UpdateDeleteChannelMessages)):
+            return
 
         ids = list(getattr(update, "messages", []) or [])
+        dbg(f"delete update {type(update).__name__} "
+            f"chat={getattr(update, 'channel_id', '-')} ids={ids}")
         if isinstance(update, raw.types.UpdateDeleteChannelMessages):
             prefix = f"-100{update.channel_id}"
             matched = {mid: f"{prefix}:{mid}" for mid in ids if f"{prefix}:{mid}" in cache}
@@ -327,6 +345,7 @@ async def on_raw_update(client, update, users, chats):
             await mark_deleted(key)
         for mid in ids:
             if mid not in matched:
+                dbg(f"delete id={mid} has no cache entry")
                 await send_log(f"[DELETED] Message ID: {mid} — no cached content")
     except Exception as error:
         print(f"[case 4] skipped: {error}")

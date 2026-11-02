@@ -109,22 +109,24 @@ is a smaller diff on top of Pyrogram — treat it as evidence, not a guarantee.
 
 ## Finding `LOG_CHAT_ID` and `TARGET_USER_ID`
 
-Set `DEBUG=1` in `.env`, run the bot, and every update it receives is printed
-with the ids you need:
+Set `DEBUG=1` in `.env` and run the bot. It prints one line per event, with the
+ids you need, and stays quiet about everything else:
 
 ```
-[dbg] message  chat=-1001234567890 (ChatType.SUPERGROUP) from=999 id=5
-[dbg] edited   chat=-1001234567890 from=999 id=5
-[dbg] raw      UpdateDeleteChannelMessages chat=1234567890 ids=[5]
+[dbg] message chat=123456789 (ChatType.PRIVATE) from=123456789 id=40074
+[dbg] cached new text id=40074 as basic:40074 -> log message 1
+[dbg] delete update UpdateDeleteMessages chat=- ids=[40074]
+[dbg] delete matched basic:40074 -> editing log message 1
 ```
 
-- `chat=` is the id to put in `LOG_CHAT_ID` (the chat you send logs **to**).
-- `from=` is the id to put in `TARGET_USER_ID` (the user you want to watch).
+- `chat=` is the id for `LOG_CHAT_ID` (the chat that receives logs).
+- `from=` is the id for `TARGET_USER_ID` (the user being watched).
+- `skip …` lines say *why* something was ignored: inside the log chat, or a
+  sender that is not the target.
 
-So: turn on `DEBUG=1`, send one message in the group that should receive the
-logs, read `chat=<id>` off the console, then set `DEBUG=0` again. If `from=`
-shows `channel/anonymous`, the message was posted as a channel or as an
-anonymous admin and cannot be attributed to a user.
+Only delete updates are reported on the raw channel — `UpdateNewMessage`,
+`UpdateUserStatus` and friends carry no message list and are skipped silently,
+which is why they look like `ids=[]` if anything prints them at all.
 
 ## What can be a log chat
 
