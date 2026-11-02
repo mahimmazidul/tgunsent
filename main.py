@@ -161,6 +161,28 @@ def media_kind_of(message):
     return None
 
 
+def media_limits(message):
+    """
+    Describe what Telegram will refuse for this media, or None if it is ordinary.
+
+    ttl_seconds marks "view once" / self-destructing media: the file reference is
+    short lived, so it can neither be forwarded nor re-sent by file_id.
+    has_protected_content ("restrict saving content") blocks forwarding too; a
+    file_id re-send may still be refused, in which case we keep a placeholder.
+    """
+    ttl = getattr(message, "ttl_seconds", None)
+    for kind in MEDIA_METHODS:
+        media = getattr(message, kind, None)
+        if media is not None and getattr(media, "ttl_seconds", None):
+            ttl = getattr(media, "ttl_seconds")
+            break
+    if ttl:
+        return f"self-destructing {ttl}s, not re-sendable"
+    if getattr(message, "has_protected_content", False):
+        return "protected content"
+    return None
+
+
 def content_of(message):
     """Plain text view of a message, used for the cache and the [DELETED] body."""
     return message.text or message.caption or "media"
@@ -211,21 +233,34 @@ async def log_new_text(message, key):
 # CASE 3: new media message from the target (photo / video / document / ...)
 # --------------------------------------------------------------------------- #
 async def log_new_media(message, key, kind):
+    limit = media_limits(message)
     caption = f"[NEW - {kind}]"
     if message.caption:
         caption = f"{caption}\n{message.caption}"
-    sent = await send_media_log(kind, getattr(message, kind).file_id, caption)
-    if sent is None:
-        # Media could not be re-sent: still leave a trace in the log chat.
-        caption = f"[NEW - {kind}] (not re-sent)"
-        sent = await send_log(caption)
+
+    note = None
+    if limit and limit.startswith("self-destructing"):
+        # Telegram never hands this file over again, so do not even try to send
+        # it: log the event, the caption and why the file is missing.
+        dbg(f"id={message.id} is once-view media ({limit})")
+        note = limit
+        sent = await send_log(f"{caption}\n({note})")
+    else:
+        sent = await send_media_log(kind, getattr(message, kind).file_id, caption)
         if sent is None:
-            return
+            # Protected content or a refused file_id: keep a trace anyway.
+            note = limit or "not re-sent"
+            dbg(f"id={message.id} media not re-sent ({note})")
+            sent = await send_log(f"{caption}\n({note})")
+
+    if sent is None:
+        return
+
     cache[key] = {
         "log_chat": LOG_CHAT_ID,
         "log_id": sent.id,
         "kind": kind,  # media log messages can only be edited as a caption
-        "text": content_of(message),
+        "text": f"media ({note})" if note else content_of(message),
         "deleted": False,
     }
     save_cache()

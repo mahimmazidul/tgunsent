@@ -158,6 +158,31 @@ are never logged, and edits/deletes only count when they come from
 | `cache.json` | Message cache, written after every change. |
 | `userbot.session` | Pyrogram's SQLite login session; keep it private. |
 
+## Self-destructing and protected media
+
+**No library can forward or re-send them — that is server-side, not a Pyrogram
+limitation.** Once-view media (`ttl_seconds`) is handed out with a short-lived
+file reference; forwarding it, downloading it or re-sending its `file_id` is
+refused by Telegram. Chats with "restrict saving content" (`has_protected_content`)
+block forwarding the same way.
+
+What this bot does instead:
+
+| Situation | Log chat gets |
+| --- | --- |
+| once-view photo/video | the event, its caption, and `(self-destructing 5s, not re-sendable)` |
+| protected chat, re-send refused | `[NEW - photo]` + `(protected content)` |
+| normal photo/video/document | the actual media, re-sent by `file_id` |
+
+So you still get *who sent what, when, with which caption* — you just never get a
+copy of the file, because Telegram will not give it to you. If the deletion event
+arrives later, the log message becomes
+`[DELETED] media (self-destructing 5s, not re-sendable)`.
+
+**Secret Chats are not supported at all.** They are end-to-end encrypted with a
+separate protocol, and Pyrogram never sees their messages, so nothing can be
+logged from them.
+
 ## Notes
 
 - Telegram does not say *who* deleted a message. The bot only watches one user,
