@@ -137,6 +137,37 @@ async def on_new_message(client, message):
         print(f"[case 1] skipped: {error}")
 
 
+# --------------------------------------------------------------------------- #
+# CASE 2: the target edits a message
+# --------------------------------------------------------------------------- #
+@app.on_edited_message()
+async def on_edited_message(client, message):
+    """CASE 2: a brand new log message, never an edit of the previous log."""
+    try:
+        if not is_target(message):
+            return
+        key = cache_key(message.chat, message.id)
+        entry = cache.get(key)
+        before = entry["text"] if entry else "(not in cache)"
+        after = content_of(message)
+        sent = await send_log(f"[EDITED]\nBefore: {before}\nAfter: {after}")
+        if sent is None:
+            return
+        if entry is None:
+            cache[key] = {
+                "log_chat": LOG_CHAT_ID,
+                "log_id": sent.id,
+                "kind": "text",
+                "text": after,
+                "deleted": False,
+            }
+        else:
+            # Keep the cache current so a later delete shows the real text.
+            entry["text"] = after
+    except Exception as error:
+        print(f"[case 2] skipped: {error}")
+
+
 if __name__ == "__main__":
     print("WARNING: automating a user account can get it restricted or banned by "
           "Telegram. Use only on an account you can afford to lose.")
