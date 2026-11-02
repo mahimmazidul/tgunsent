@@ -279,6 +279,20 @@ missed. Two rules: **never run two copies against the same `userbot.session`**
 `AuthKeyDuplicated` means the session file was copied across IPs — delete it and
 log in again.
 
+## Why reactions do not show up as edits
+
+Reacting to a message makes Telegram send an **edit update** for that message —
+the reaction counters changed. The bot filters those out in two ways:
+
+1. **Text unchanged → ignored.** For anything it logged, the new text is compared
+   with the cached text; identical means it was a reaction, a pin, a view counter
+   or similar, not an edit.
+2. **Never logged → ignored by default.** There is no "before" to show, and a
+   reaction is the most likely cause. Set `LOG_UNCACHED_EDITS=1` to log these
+   anyway (they appear as `Before: (not in cache)`).
+
+Genuine edits are unaffected, including caption edits on media.
+
 ## Notes
 
 - Telegram does not say *who* deleted a message. The bot only watches one user,

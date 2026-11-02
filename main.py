@@ -121,6 +121,13 @@ NOTIFY_ON_STOP = (os.getenv("NOTIFY_ON_STOP") or "1").strip().lower() in (
 NOTIFY_ON_START = (os.getenv("NOTIFY_ON_START") or "0").strip().lower() in (
     "1", "true", "yes", "on")
 
+# Reacting to a message makes Telegram send an EDIT update for it (the reaction
+# counters changed). Edits whose text did not change are always ignored. Edits of
+# messages we never logged are ignored too unless this is enabled, because we
+# have no "before" to compare against and can only guess.
+LOG_UNCACHED_EDITS = (os.getenv("LOG_UNCACHED_EDITS") or "0").strip().lower() in (
+    "1", "true", "yes", "on")
+
 # Media kinds we can re-send straight from a file_id, mapped to the client method.
 MEDIA_METHODS = {
     "photo": "send_photo",
@@ -322,7 +329,9 @@ async def log_new_media(message, key, kind, who):
         "log_id": sent.id,
         "kind": kind,  # media log messages can only be edited as a caption
         "user": who,
-        "text": f"media ({note})" if note else content_of(message),
+        # Prefer the caption even when the file itself could not be re-sent, so
+        # a later edit/delete shows something meaningful.
+        "text": message.caption or (f"media ({note})" if note else content_of(message)),
         "deleted": False,
     }
     save_cache()
@@ -370,8 +379,21 @@ async def on_edited_message(client, message):
             return
         key = cache_key(message.chat, message.id)
         entry = cache.get(key)
-        before = entry["text"] if entry else "(not in cache)"
         after = content_of(message)
+
+        if entry is not None:
+            before = entry["text"]
+            if before == after:
+                # Same text: a reaction, a pin, a view counter - not an edit.
+                dbg(f"skip edit id={message.id}: text unchanged (reaction or similar)")
+                return
+        else:
+            before = "(not in cache)"
+            if not LOG_UNCACHED_EDITS:
+                dbg(f"skip edit id={message.id}: never logged, no 'before' to show "
+                    f"(LOG_UNCACHED_EDITS=1 to log these)")
+                return
+
         sent = await send_log(f"[EDITED] {who}\nBefore: {before}\nAfter: {after}")
         if sent is None:
             return
