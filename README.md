@@ -154,7 +154,7 @@ are never logged, and edits/deletes only count when they come from
 it loaded at start. Stop, pull, start:
 
 ```bash
-cd /path/to/tgunsent          # your project folder
+cd /path/to/tgunsent                    # wherever you cloned it
 
 # 1. stop it (this sends [STOPPED] to the log chat, then disconnects)
 tmux kill-session -t userbot
