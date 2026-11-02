@@ -208,6 +208,22 @@ async def send_media_log(kind, file_id, caption):
         return None
 
 
+async def copy_media_log(chat_id, message_id, caption):
+    """
+    Server-side copy: get_messages() then message.copy(). This refetches the
+    message, which mints a fresh file_reference, so it works when a plain
+    file_id re-send fails with FILE_REFERENCE_EXPIRED. It is not a forward: the
+    result is a normal message of ours with no "forwarded from" header.
+    """
+    try:
+        return await app.copy_message(
+            LOG_CHAT_ID, chat_id, message_id, caption=caption[:1024]
+        )
+    except Exception as error:
+        print(f"[log] copy fallback failed: {error}")
+        return None
+
+
 # --------------------------------------------------------------------------- #
 # CASE 1: new text message from the target
 # --------------------------------------------------------------------------- #
@@ -248,7 +264,12 @@ async def log_new_media(message, key, kind):
     else:
         sent = await send_media_log(kind, getattr(message, kind).file_id, caption)
         if sent is None:
-            # Protected content or a refused file_id: keep a trace anyway.
+            # Most common cause: a stale file_reference (expired, or single-use
+            # for once-view media). copy_message refetches and retries.
+            dbg(f"id={message.id} file_id re-send refused, trying copy")
+            sent = await copy_media_log(message.chat.id, message.id, caption)
+        if sent is None:
+            # Protected content or the message is gone: keep a trace anyway.
             note = limit or "not re-sent"
             dbg(f"id={message.id} media not re-sent ({note})")
             sent = await send_log(f"{caption}\n({note})")

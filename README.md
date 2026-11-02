@@ -171,8 +171,15 @@ What this bot does instead:
 | Situation | Log chat gets |
 | --- | --- |
 | once-view photo/video | the event, its caption, and `(self-destructing 5s, not re-sendable)` |
-| protected chat, re-send refused | `[NEW - photo]` + `(protected content)` |
 | normal photo/video/document | the actual media, re-sent by `file_id` |
+| `file_id` refused (`FILE_REFERENCE_EXPIRED`) | retried automatically with `copy_message`, which refetches the message and mints a fresh file reference |
+| protected chat / message already gone | `[NEW - photo]` + `(protected content)` / `(not re-sent)` |
+
+File references expire, and once-view media uses single-use ones. That is what
+`FILE_REFERENCE_EXPIRED` means. The fallback is `copy_message()`, which is
+`get_messages()` + `message.copy()`: it fetches the message again for a valid
+reference and re-sends it as **our own** message — no "forwarded from" header, and
+still fully editable, so it is not a forward.
 
 So you still get *who sent what, when, with which caption* — you just never get a
 copy of the file, because Telegram will not give it to you. If the deletion event
