@@ -406,12 +406,18 @@ async def on_raw_update(client, update, users, chats):
 
         for key in matched.values():
             await mark_deleted(key)
-        for mid in ids:
-            if mid not in matched:
-                dbg(f"delete id={mid} is not in the cache: sender unknown, "
-                    f"logging nothing (LOG_UNKNOWN_DELETES=1 to report it)")
-                if LOG_UNKNOWN_DELETES:
-                    await send_log(f"[DELETED] Message ID: {mid} — no cached content")
+
+        unknown = [mid for mid in ids if mid not in matched]
+        if unknown:
+            shown = ", ".join(str(mid) for mid in unknown[:20])
+            dbg(f"delete: {len(ids)} id(s), {len(matched)} matched, "
+                f"{len(unknown)} not cached ({shown}) -> ignored, sender unknown")
+        else:
+            dbg(f"delete: {len(ids)} id(s), all {len(matched)} matched in cache")
+
+        if unknown and LOG_UNKNOWN_DELETES:
+            for mid in unknown:
+                await send_log(f"[DELETED] Message ID: {mid} — no cached content")
     except Exception as error:
         print(f"[case 4] skipped: {error}")
 
