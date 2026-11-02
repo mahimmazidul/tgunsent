@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 
-import asyncio
 import json
 import os
 
 from dotenv import load_dotenv
-from pyrogram import Client, enums, idle, raw, utils
+from pyrogram import Client, enums, raw, utils
 
 load_dotenv()
 
@@ -24,17 +23,6 @@ DEBUG = (os.getenv("DEBUG") or "").strip().lower() in ("1", "true", "yes", "on")
 # "[DELETED] Message ID: N - no cached content" for those anyway.
 LOG_UNKNOWN_DELETES = (os.getenv("LOG_UNKNOWN_DELETES") or "").strip().lower() in (
     "1", "true", "yes", "on")
-
-# Online status is per ACCOUNT, not per session: while any session is connected
-# Telegram may show the account as online. STAY_OFFLINE=1 re-asserts offline on a
-# timer so the target never sees you "online" just because the bot is running.
-# Opening the chat on your own phone still marks it read - that is your session.
-STAY_OFFLINE = (os.getenv("STAY_OFFLINE") or "").strip().lower() in (
-    "1", "true", "yes", "on")
-try:
-    OFFLINE_INTERVAL = max(30, int(os.getenv("OFFLINE_INTERVAL") or 240))
-except ValueError:
-    OFFLINE_INTERVAL = 240
 
 CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache.json")
 
@@ -435,28 +423,6 @@ async def on_raw_update(client, update, users, chats):
 
 
 # --------------------------------------------------------------------------- #
-# optional: keep the account offline while the bot runs
-# --------------------------------------------------------------------------- #
-async def go_offline_once():
-    """One account.UpdateStatus(offline=True). Never touches read state."""
-    try:
-        await app.invoke(raw.functions.account.UpdateStatus(offline=True))
-        dbg("sent account.UpdateStatus(offline=True)")
-    except Exception as error:
-        print(f"[offline] update failed: {error}")
-
-
-async def keep_offline():
-    """
-    Re-assert offline on a timer. This is a background keepalive, not part of
-    event handling, so the handlers stay instant.
-    """
-    while True:
-        await go_offline_once()
-        await asyncio.sleep(OFFLINE_INTERVAL)
-
-
-# --------------------------------------------------------------------------- #
 # startup
 # --------------------------------------------------------------------------- #
 if __name__ == "__main__":
@@ -469,19 +435,8 @@ if __name__ == "__main__":
     load_cache()
     print(f"Loaded {len(cache)} cached message(s) from {CACHE_FILE}")
     print(f"Tracking user {TARGET_USER_ID} -> log chat {LOG_CHAT_ID}")
-    if STAY_OFFLINE:
-        print(f"STAY_OFFLINE is on: re-asserting offline every {OFFLINE_INTERVAL}s "
-              f"(read receipts are untouched; your phone still controls them).")
     if DEBUG:
         print("DEBUG is on: every message prints chat=<id> from=<user id>. Send "
               "something in the group you want to log to, then copy chat=<id> "
               "into LOG_CHAT_ID.")
-
-    async def run_bot():
-        await app.start()
-        if STAY_OFFLINE:
-            asyncio.create_task(keep_offline())
-        await idle()
-        await app.stop()
-
-    app.loop.run_until_complete(run_bot())
+    app.run()
