@@ -44,6 +44,17 @@ except TypeError:
 cache = {}
 
 
+# Media kinds we can re-send straight from a file_id, mapped to the client method.
+MEDIA_METHODS = {
+    "photo": "send_photo",
+    "video": "send_video",
+    "document": "send_document",
+    "animation": "send_animation",
+    "audio": "send_audio",
+    "voice": "send_voice",
+}
+
+
 # --------------------------------------------------------------------------- #
 # cache.json helpers (stdlib json only)
 # --------------------------------------------------------------------------- #
@@ -88,6 +99,14 @@ def is_target(message):
     )
 
 
+def media_kind_of(message):
+    """Return 'photo' / 'video' / 'document' / ... or None."""
+    for kind in MEDIA_METHODS:
+        if getattr(message, kind, None):
+            return kind
+    return None
+
+
 def content_of(message):
     """Plain text view of a message, used for the cache and the [DELETED] body."""
     return message.text or message.caption or "media"
@@ -101,6 +120,17 @@ async def send_log(text):
         )
     except Exception as error:
         print(f"[log] send failed: {error}")
+        return None
+
+
+async def send_media_log(kind, file_id, caption):
+    """Re-send media we own, straight from its file_id (works for protected content)."""
+    try:
+        return await getattr(app, MEDIA_METHODS[kind])(
+            LOG_CHAT_ID, file_id, caption=caption[:1024]
+        )
+    except Exception as error:
+        print(f"[log] {kind} re-send failed: {error}")
         return None
 
 
@@ -124,17 +154,45 @@ async def log_new_text(message, key):
 
 
 # --------------------------------------------------------------------------- #
-# on_message -> CASE 1
+# CASE 3: new media message from the target (photo / video / document / ...)
+# --------------------------------------------------------------------------- #
+async def log_new_media(message, key, kind):
+    caption = f"[NEW - {kind}]"
+    if message.caption:
+        caption = f"{caption}\n{message.caption}"
+    sent = await send_media_log(kind, getattr(message, kind).file_id, caption)
+    if sent is None:
+        # Media could not be re-sent: still leave a trace in the log chat.
+        caption = f"[NEW - {kind}] (not re-sent)"
+        sent = await send_log(caption)
+        if sent is None:
+            return
+    cache[key] = {
+        "log_chat": LOG_CHAT_ID,
+        "log_id": sent.id,
+        "kind": kind,  # media log messages can only be edited as a caption
+        "text": content_of(message),
+        "deleted": False,
+    }
+
+
+# --------------------------------------------------------------------------- #
+# on_message -> CASE 1 and CASE 3
 # --------------------------------------------------------------------------- #
 @app.on_message()
 async def on_new_message(client, message):
-    """CASE 1: new text message from the target user."""
+    """CASE 1 (text) and CASE 3 (media) for the target user."""
     try:
         if not is_target(message):
             return
-        await log_new_text(message, cache_key(message.chat, message.id))
+        key = cache_key(message.chat, message.id)
+        kind = media_kind_of(message)
+        if kind:
+            await log_new_media(message, key, kind)  # CASE 3
+        else:
+            await log_new_text(message, key)  # CASE 1
     except Exception as error:
-        print(f"[case 1] skipped: {error}")
+        print(f"[case 1/3] skipped: {error}")
 
 
 # --------------------------------------------------------------------------- #
