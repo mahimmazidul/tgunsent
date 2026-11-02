@@ -4,7 +4,7 @@ import json
 import os
 
 from dotenv import load_dotenv
-from pyrogram import Client, enums, raw
+from pyrogram import Client, enums, raw, utils
 
 load_dotenv()
 
@@ -12,6 +12,10 @@ API_ID = int(os.getenv("API_ID") or 0)
 API_HASH = (os.getenv("API_HASH") or "").strip()
 TARGET_USER_ID = int(os.getenv("TARGET_USER_ID") or 0)
 LOG_CHAT_ID = int(os.getenv("LOG_CHAT_ID") or 0)
+
+# DEBUG=1 prints every update the account receives, including chat ids, which is
+# how you discover TARGET_USER_ID and LOG_CHAT_ID. Off by default.
+DEBUG = (os.getenv("DEBUG") or "").strip().lower() in ("1", "true", "yes", "on")
 
 CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache.json")
 
@@ -213,6 +217,10 @@ async def log_new_media(message, key, kind):
 async def on_new_message(client, message):
     """CASE 1 (text) and CASE 3 (media) for the target user."""
     try:
+        if DEBUG:
+            sender = message.from_user.id if message.from_user else "channel/anonymous"
+            print(f"[dbg] message  chat={message.chat.id} ({message.chat.type}) "
+                  f"from={sender} id={message.id}")
         if not is_target(message):
             return
         key = cache_key(message.chat, message.id)
@@ -232,6 +240,9 @@ async def on_new_message(client, message):
 async def on_edited_message(client, message):
     """CASE 2: a brand new log message, never an edit of the previous log."""
     try:
+        if DEBUG:
+            sender = message.from_user.id if message.from_user else "channel/anonymous"
+            print(f"[dbg] edited   chat={message.chat.id} from={sender} id={message.id}")
         if not is_target(message):
             return
         key = cache_key(message.chat, message.id)
@@ -288,6 +299,11 @@ async def mark_deleted(key):
 async def on_raw_update(client, update, users, chats):
     """CASE 4: Telegram never names the deleter; we only match ids from our cache."""
     try:
+        if DEBUG:
+            print(f"[dbg] raw      {type(update).__name__} "
+                  f"chat={getattr(update, 'channel_id', '-')} "
+                  f"ids={list(getattr(update, 'messages', []) or [])}")
+
         ids = list(getattr(update, "messages", []) or [])
         if isinstance(update, raw.types.UpdateDeleteChannelMessages):
             prefix = f"-100{update.channel_id}"
@@ -329,4 +345,8 @@ if __name__ == "__main__":
     load_cache()
     print(f"Loaded {len(cache)} cached message(s) from {CACHE_FILE}")
     print(f"Tracking user {TARGET_USER_ID} -> log chat {LOG_CHAT_ID}")
+    if DEBUG:
+        print("DEBUG is on: every message prints chat=<id> from=<user id>. Send "
+              "something in the group you want to log to, then copy chat=<id> "
+              "into LOG_CHAT_ID.")
     app.run()

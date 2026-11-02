@@ -107,6 +107,44 @@ A static review of pyrofork 2.3.69 found no backdoor: the only outbound socket i
 no HTTP client, no bundled binaries. The same lineage applies to kurigram, which
 is a smaller diff on top of Pyrogram — treat it as evidence, not a guarantee.
 
+## Finding `LOG_CHAT_ID` and `TARGET_USER_ID`
+
+Set `DEBUG=1` in `.env`, run the bot, and every update it receives is printed
+with the ids you need:
+
+```
+[dbg] message  chat=-1001234567890 (ChatType.SUPERGROUP) from=999 id=5
+[dbg] edited   chat=-1001234567890 from=999 id=5
+[dbg] raw      UpdateDeleteChannelMessages chat=1234567890 ids=[5]
+```
+
+- `chat=` is the id to put in `LOG_CHAT_ID` (the chat you send logs **to**).
+- `from=` is the id to put in `TARGET_USER_ID` (the user you want to watch).
+
+So: turn on `DEBUG=1`, send one message in the group that should receive the
+logs, read `chat=<id>` off the console, then set `DEBUG=0` again. If `from=`
+shows `channel/anonymous`, the message was posted as a channel or as an
+anonymous admin and cannot be attributed to a user.
+
+## What can be a log chat
+
+Anything your account can post to:
+
+| Log chat | `LOG_CHAT_ID` looks like | Notes |
+| --- | --- | --- |
+| **Saved Messages** | your own user id, `123456789` | Simplest and most private. |
+| Private group / supergroup | `-100…` (supergroup) or `-123456789` | You must be a member; mute is fine. |
+| Channel | `-100…` | You need admin/post rights. |
+| Chat with a bot | the bot's user id | Works; handy for archiving. |
+
+Not usable: Secret Chats (they never deliver update events) and channels where
+you have no posting rights. If posting fails you will see
+`[log] send failed: CHAT_WRITE_FORBIDDEN` in the console.
+
+**Only this one user is mirrored.** Messages you send from the bot's own account
+are never logged, and edits/deletes only count when they come from
+`TARGET_USER_ID`.
+
 ## Files
 
 | File | Purpose |
