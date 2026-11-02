@@ -12,8 +12,38 @@ load_dotenv()
 
 API_ID = int(os.getenv("API_ID") or 0)
 API_HASH = (os.getenv("API_HASH") or "").strip()
-TARGET_USER_ID = int(os.getenv("TARGET_USER_ID") or 0)
 LOG_CHAT_ID = int(os.getenv("LOG_CHAT_ID") or 0)
+
+
+def parse_targets():
+    """
+    TARGET_USERS=123:Alice,456:Bob   -> {123: "Alice", 456: "Bob"}
+    TARGET_USER_ID=123 (legacy)     -> {123: "123"}
+
+    The nickname is what appears in front of every log line, so several users can
+    share one log chat without confusion.
+    """
+    targets = {}
+    for item in (os.getenv("TARGET_USERS") or "").split(","):
+        item = item.strip()
+        if not item:
+            continue
+        user_id, _, nick = item.partition(":")
+        try:
+            uid = int(user_id.strip())
+        except ValueError:
+            print(f"[config] ignoring TARGET_USERS entry {item!r}: id is not a number")
+            continue
+        targets[uid] = nick.strip() or str(uid)
+    if not targets:
+        legacy = int(os.getenv("TARGET_USER_ID") or 0)
+        if legacy:
+            targets[legacy] = (os.getenv("TARGET_NICKNAME") or "").strip() or str(legacy)
+    return targets
+
+
+TARGETS = parse_targets()
+TARGET_USER_ID = next(iter(TARGETS), 0)  # kept for the startup banner
 
 # DEBUG=1 prints every update the account receives, including chat ids, which is
 # how you discover TARGET_USER_ID and LOG_CHAT_ID. Off by default.
@@ -152,15 +182,14 @@ def cache_key(chat, message_id):
     return f"basic:{message_id}"
 
 
-def is_target(message):
-    """True only for a real, non-service message authored by TARGET_USER_ID."""
-    return bool(
-        message.chat
-        and message.chat.id != LOG_CHAT_ID  # never log our own log chat
-        and message.from_user
-        and message.from_user.id == TARGET_USER_ID
-        and not message.service
-    )
+def target_of(message):
+    """Nickname of the watched user who sent this message, or None."""
+    if (not message.chat
+            or message.chat.id == LOG_CHAT_ID  # never log our own log chat
+            or not message.from_user
+            or message.service):
+        return None
+    return TARGETS.get(message.from_user.id)
 
 
 def media_kind_of(message):
@@ -237,9 +266,9 @@ async def copy_media_log(chat_id, message_id, caption):
 # --------------------------------------------------------------------------- #
 # CASE 1: new text message from the target
 # --------------------------------------------------------------------------- #
-async def log_new_text(message, key):
+async def log_new_text(message, key, who):
     text = content_of(message)
-    sent = await send_log(f"[NEW] {text}")
+    sent = await send_log(f"[NEW] {who}: {text}")
     if sent is None:
         return
     # We store OUR log message id, not the original one: that is the message we
@@ -249,6 +278,7 @@ async def log_new_text(message, key):
         "log_chat": LOG_CHAT_ID,
         "log_id": sent.id,
         "kind": "text",
+        "user": who,
         "text": text,
         "deleted": False,
     }
@@ -258,9 +288,9 @@ async def log_new_text(message, key):
 # --------------------------------------------------------------------------- #
 # CASE 3: new media message from the target (photo / video / document / ...)
 # --------------------------------------------------------------------------- #
-async def log_new_media(message, key, kind):
+async def log_new_media(message, key, kind, who):
     limit = media_limits(message)
-    caption = f"[NEW - {kind}]"
+    caption = f"[NEW - {kind}] {who}"
     if message.caption:
         caption = f"{caption}\n{message.caption}"
 
@@ -291,6 +321,7 @@ async def log_new_media(message, key, kind):
         "log_chat": LOG_CHAT_ID,
         "log_id": sent.id,
         "kind": kind,  # media log messages can only be edited as a caption
+        "user": who,
         "text": f"media ({note})" if note else content_of(message),
         "deleted": False,
     }
@@ -310,15 +341,17 @@ async def on_new_message(client, message):
         if message.chat and message.chat.id == LOG_CHAT_ID:
             dbg(f"skip id={message.id}: it is inside the log chat")
             return
-        if not is_target(message):
-            dbg(f"skip id={message.id}: sender is not TARGET_USER_ID")
+        who = target_of(message)
+        if who is None:
+            dbg(f"skip id={message.id}: {sender} is not a watched user")
             return
+        dbg(f"watched user {sender} -> nickname {who!r}")
         key = cache_key(message.chat, message.id)
         kind = media_kind_of(message)
         if kind:
-            await log_new_media(message, key, kind)  # CASE 3
+            await log_new_media(message, key, kind, who)  # CASE 3
         else:
-            await log_new_text(message, key)  # CASE 1
+            await log_new_text(message, key, who)  # CASE 1
     except Exception as error:
         print(f"[case 1/3] skipped: {error}")
 
@@ -332,13 +365,14 @@ async def on_edited_message(client, message):
     try:
         sender = message.from_user.id if message.from_user else "channel/anonymous"
         dbg(f"edited chat={message.chat.id} from={sender} id={message.id}")
-        if not is_target(message):
+        who = target_of(message)
+        if who is None:
             return
         key = cache_key(message.chat, message.id)
         entry = cache.get(key)
         before = entry["text"] if entry else "(not in cache)"
         after = content_of(message)
-        sent = await send_log(f"[EDITED]\nBefore: {before}\nAfter: {after}")
+        sent = await send_log(f"[EDITED] {who}\nBefore: {before}\nAfter: {after}")
         if sent is None:
             return
         if entry is None:
@@ -346,6 +380,7 @@ async def on_edited_message(client, message):
                 "log_chat": LOG_CHAT_ID,
                 "log_id": sent.id,
                 "kind": "text",
+                "user": who,
                 "text": after,
                 "deleted": False,
             }
@@ -367,21 +402,23 @@ async def mark_deleted(key):
         return
     entry["deleted"] = True
     was = entry.get("text") or "media"
-    dbg(f"delete matched {key} -> editing log message {entry.get('log_id')}")
+    who = entry.get("user")
+    label = f"{who}: {was}" if who else was
+    dbg(f"delete matched {key} ({who}) -> editing log message {entry.get('log_id')}")
     try:
         if entry.get("kind") == "text":
             await app.edit_message_text(
-                entry["log_chat"], entry["log_id"], f"[DELETED] {was}"[:4096]
+                entry["log_chat"], entry["log_id"], f"[DELETED] {label}"[:4096]
             )
         else:
             # A media log message only accepts caption edits.
             await app.edit_message_caption(
-                entry["log_chat"], entry["log_id"], f"[DELETED] {was}"[:1024]
+                entry["log_chat"], entry["log_id"], f"[DELETED] {label}"[:1024]
             )
     except Exception as error:
         # Too old / not editable / no permission: fall back to a fresh message.
         print(f"[case 4] edit failed ({error}), sending a new message")
-        await send_log(f"[DELETED] {was}")
+        await send_log(f"[DELETED] {label}")
     save_cache()
 
 
@@ -472,15 +509,18 @@ async def serve():
 # startup
 # --------------------------------------------------------------------------- #
 if __name__ == "__main__":
-    if not (API_ID and API_HASH and TARGET_USER_ID and LOG_CHAT_ID):
+    if not (API_ID and API_HASH and TARGETS and LOG_CHAT_ID):
         raise SystemExit(
-            "Fill API_ID, API_HASH, TARGET_USER_ID and LOG_CHAT_ID in .env first."
+            "Fill API_ID, API_HASH, TARGET_USERS (or TARGET_USER_ID) and "
+            "LOG_CHAT_ID in .env first."
         )
     print("WARNING: automating a user account can get it restricted or banned by "
           "Telegram. Use only on an account you can afford to lose.")
     load_cache()
     print(f"Loaded {len(cache)} cached message(s) from {CACHE_FILE}")
-    print(f"Tracking user {TARGET_USER_ID} -> log chat {LOG_CHAT_ID}")
+    watched = ", ".join(f"{nick} ({uid})" for uid, nick in TARGETS.items())
+    print(f"Tracking {len(TARGETS)} user(s): {watched}")
+    print(f"Log chat: {LOG_CHAT_ID}")
     if DEBUG:
         print("DEBUG is on: every message prints chat=<id> from=<user id>. Send "
               "something in the group you want to log to, then copy chat=<id> "

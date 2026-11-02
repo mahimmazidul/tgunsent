@@ -1,6 +1,6 @@
 # tgunsent
 
-Minimal Pyrogram userbot that watches **one** user (`TARGET_USER_ID`) and logs
+Minimal Pyrogram userbot that watches **one or more** users (`TARGET_USERS`) and logs
 their activity into `LOG_CHAT_ID`: new text (`[NEW]`), edits (`[EDITED]` with
 before/after), photos/videos/documents (re-sent with a `[NEW - photo]` caption)
 and deletions — the original log message is edited to
