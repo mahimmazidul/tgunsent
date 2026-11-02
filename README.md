@@ -190,6 +190,71 @@ arrives later, the log message becomes
 separate protocol, and Pyrogram never sees their messages, so nothing can be
 logged from them.
 
+## Keeping it running, and what happens on a disconnect
+
+**"Offline" does not mean disconnected.** Online status is only a flag; API calls
+work regardless, so the bot posts to the log chat whether you appear online or
+offline. A running bot with `offline` status is the normal, intended state.
+
+If the connection does drop, three layers handle it:
+
+1. **Auto-reconnect.** The session restarts itself on a null packet or transport
+   error; short flood waits are slept off automatically.
+2. **Gap recovery (kurigram only).** kurigram stores the update state in
+   `userbot.session` and calls `recover_gaps()` when the dispatcher starts, which
+   pulls `updates.GetDifference` and replays what arrived while you were down — so
+   messages sent during an outage still get logged once it reconnects. Stock
+   Pyrogram 2.0.106 has no such code, and pyrofork stores the state but never
+   reads it back. This is the strongest practical reason to stay on kurigram.
+3. **Hard limits.** Telegram only keeps differences for a limited window. If the
+   bot was down long enough, the stored `pts` expires
+   (`PersistentTimestampOutdated`) and the gap is dropped — those messages are
+   gone. Nothing can fix that retroactively.
+
+### screen or tmux?
+
+Both survive SSH drops; **tmux** is the better choice (actively maintained, real
+scrollback, panes, scriptable):
+
+```bash
+tmux new -d -s userbot 'python main.py'   # start detached
+tmux ls                                   # is it running?
+tmux attach -t userbot                    # look at it (Ctrl+B then D to detach)
+```
+
+The `screen` equivalent, if that is all the box has:
+
+```bash
+screen -dmS userbot python main.py
+screen -r userbot
+```
+
+Neither restarts a crashed process. For that, use `systemd --user`, which is more
+reliable than either multiplexer:
+
+```ini
+# ~/.config/systemd/user/tgunsent.service
+[Unit]
+Description=tgunsent
+[Service]
+WorkingDirectory=%h/tgunsent
+ExecStart=%h/tgunsent/.venv/bin/python main.py
+Restart=always
+RestartSec=10
+[Install]
+WantedBy=default.target
+```
+```bash
+systemctl --user enable --now tgunsent
+loginctl enable-linger "$USER"     # keep it running after you log out
+```
+
+With gap recovery, a crash plus restart is cheap: the bot catches up on what it
+missed. Two rules: **never run two copies against the same `userbot.session`**
+(check `tmux ls` / `pgrep -f main.py` first), and if a restart keeps failing,
+`AuthKeyDuplicated` means the session file was copied across IPs — delete it and
+log in again.
+
 ## Notes
 
 - Telegram does not say *who* deleted a message. The bot only watches one user,
