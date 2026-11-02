@@ -190,6 +190,32 @@ arrives later, the log message becomes
 separate protocol, and Pyrogram never sees their messages, so nothing can be
 logged from them.
 
+## Online status and read receipts
+
+These are two different things, and only one of them is under the bot's control:
+
+| | Controlled by | Bot's effect |
+| --- | --- | --- |
+| **"seen" / blue ticks** | whichever session actually reads the chat | **none** — the bot never calls `read_chat_history` or `messages.ReadHistory` |
+| **"online" / last seen** | the account, shared by all sessions | can be suppressed with `STAY_OFFLINE=1` |
+
+So: open the chat on your phone and the target sees **seen**, because that is your
+session reading it. Leave the bot running and `STAY_OFFLINE=1` re-asserts
+`account.UpdateStatus(offline=True)` every `OFFLINE_INTERVAL` seconds (default
+240, minimum 30) so a running bot does not make you look permanently online.
+
+Honest caveats:
+
+- Status is **account-wide**, so this is a tug of war. While you actively use
+  your phone it goes online again; the bot only pushes it back on its timer, so a
+  brief "online" flicker is possible.
+- Each offline update refreshes *last seen*, so the profile reads "last seen just
+  now" rather than "online". Invisibility is not on the menu — Telegram does not
+  offer it for an active account.
+- The bot is a connected session, so incoming messages still show **delivered**
+  (✓✓) to the target. Nothing can prevent that except not being logged in.
+- If you want to look truly idle, set a larger `OFFLINE_INTERVAL` (e.g. 900).
+
 ## Notes
 
 - Telegram does not say *who* deleted a message. The bot only watches one user,
