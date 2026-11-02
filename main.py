@@ -17,9 +17,8 @@ try:
 except (KeyError, ValueError):
     raise SystemExit("Set valid API_ID, API_HASH, TARGET_USER_ID and LOG_CHAT_ID in .env")
 
-# One worker preserves update order, including while a forward is in progress.
 app = Client("username", api_id=API_ID, api_hash=API_HASH, workers=1, sleep_threshold=0)
-cache = {}  # (channel id or None, message id) -> original text and log message id
+cache = {}
 
 
 def key_for(message):
@@ -56,9 +55,9 @@ async def attempt(operation, *args, **kwargs):
             return None
 
 
-# Case 1: forward a newly received target-user message.
 @app.on_message()
 async def on_new(client, message):
+    """Case 1: forward a newly received target-user message."""
     if not target_message(message):
         return
     key = key_for(message)
@@ -70,9 +69,9 @@ async def on_new(client, message):
         cache[key]["log_id"] = forwarded.id
 
 
-# Case 2: send the edited text, with the initially observed original if available.
 @app.on_edited_message()
 async def on_edit(client, message):
+    """Case 2: log edited text and the original when cached."""
     if not target_message(message):
         return
     entry = cache.get(key_for(message))
@@ -86,9 +85,9 @@ async def on_edit(client, message):
                       parse_mode=enums.ParseMode.DISABLED, disable_web_page_preview=True)
 
 
-# Case 3: try to edit the forwarded copy if Telegram allows it; never send a new message.
 @app.on_raw_update(group=1)
 async def on_delete(client, update, users, chats):
+    """Case 3: try to label the forwarded message after deletion."""
     if isinstance(update, raw.types.UpdateDeleteChannelMessages):
         channel = int(f"-100{update.channel_id}")
     elif isinstance(update, raw.types.UpdateDeleteMessages):
