@@ -71,6 +71,17 @@ def load_cache():
         print(f"[cache] could not read {CACHE_FILE}: {error}")
 
 
+def save_cache():
+    """Write cache.json after every mutation (atomic, so a crash cannot truncate)."""
+    try:
+        tmp = f"{CACHE_FILE}.tmp"
+        with open(tmp, "w", encoding="utf-8") as handle:
+            json.dump(cache, handle, ensure_ascii=False)
+        os.replace(tmp, CACHE_FILE)
+    except Exception as error:
+        print(f"[cache] could not write {CACHE_FILE}: {error}")
+
+
 # --------------------------------------------------------------------------- #
 # small helpers
 # --------------------------------------------------------------------------- #
@@ -151,6 +162,7 @@ async def log_new_text(message, key):
         "text": text,
         "deleted": False,
     }
+    save_cache()
 
 
 # --------------------------------------------------------------------------- #
@@ -174,6 +186,7 @@ async def log_new_media(message, key, kind):
         "text": content_of(message),
         "deleted": False,
     }
+    save_cache()
 
 
 # --------------------------------------------------------------------------- #
@@ -222,6 +235,7 @@ async def on_edited_message(client, message):
         else:
             # Keep the cache current so a later delete shows the real text.
             entry["text"] = after
+        save_cache()
     except Exception as error:
         print(f"[case 2] skipped: {error}")
 
@@ -250,6 +264,7 @@ async def mark_deleted(key):
         # Too old / not editable / no permission: fall back to a fresh message.
         print(f"[case 4] edit failed ({error}), sending a new message")
         await send_log(f"[DELETED]\nContent was: {was}")
+    save_cache()
 
 
 @app.on_raw_update(group=1)

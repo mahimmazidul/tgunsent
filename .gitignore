@@ -3,3 +3,5 @@
 __pycache__/
 *.session
 *.session-journal
+cache.json
+cache.json.tmp
