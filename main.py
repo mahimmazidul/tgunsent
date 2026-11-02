@@ -17,6 +17,13 @@ LOG_CHAT_ID = int(os.getenv("LOG_CHAT_ID") or 0)
 # how you discover TARGET_USER_ID and LOG_CHAT_ID. Off by default.
 DEBUG = (os.getenv("DEBUG") or "").strip().lower() in ("1", "true", "yes", "on")
 
+# A delete update carries no sender. If the id is not in our cache we cannot know
+# whose message it was, so by default nothing is written (otherwise your own
+# deletions get reported as if they were the target's). Set to 1 to log
+# "[DELETED] Message ID: N - no cached content" for those anyway.
+LOG_UNKNOWN_DELETES = (os.getenv("LOG_UNKNOWN_DELETES") or "").strip().lower() in (
+    "1", "true", "yes", "on")
+
 CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache.json")
 
 # One single, self-consistent Telegram Desktop identity. Telegram compares these
@@ -298,17 +305,17 @@ async def mark_deleted(key):
     try:
         if entry.get("kind") == "text":
             await app.edit_message_text(
-                entry["log_chat"], entry["log_id"], f"[DELETED]\nContent was: {was}"[:4096]
+                entry["log_chat"], entry["log_id"], f"[DELETED] {was}"[:4096]
             )
         else:
             # A media log message only accepts caption edits.
             await app.edit_message_caption(
-                entry["log_chat"], entry["log_id"], f"[DELETED] Content was: {was}"[:1024]
+                entry["log_chat"], entry["log_id"], f"[DELETED] {was}"[:1024]
             )
     except Exception as error:
         # Too old / not editable / no permission: fall back to a fresh message.
         print(f"[case 4] edit failed ({error}), sending a new message")
-        await send_log(f"[DELETED]\nContent was: {was}")
+        await send_log(f"[DELETED] {was}")
     save_cache()
 
 
@@ -345,8 +352,10 @@ async def on_raw_update(client, update, users, chats):
             await mark_deleted(key)
         for mid in ids:
             if mid not in matched:
-                dbg(f"delete id={mid} has no cache entry")
-                await send_log(f"[DELETED] Message ID: {mid} — no cached content")
+                dbg(f"delete id={mid} is not in the cache: sender unknown, "
+                    f"logging nothing (LOG_UNKNOWN_DELETES=1 to report it)")
+                if LOG_UNKNOWN_DELETES:
+                    await send_log(f"[DELETED] Message ID: {mid} — no cached content")
     except Exception as error:
         print(f"[case 4] skipped: {error}")
 

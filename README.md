@@ -3,7 +3,8 @@
 Minimal Pyrogram userbot that watches **one** user (`TARGET_USER_ID`) and logs
 their activity into `LOG_CHAT_ID`: new text (`[NEW]`), edits (`[EDITED]` with
 before/after), photos/videos/documents (re-sent with a `[NEW - photo]` caption)
-and deletions (`[DELETED]` edited onto the log message we own).
+and deletions — the original log message is edited to
+`[DELETED] <last known content>`.
 
 Nothing is ever forwarded — every log message is re-sent by this account, so it
 can always be edited later. Content is cached in `cache.json` (stdlib `json`),
@@ -165,7 +166,11 @@ are never logged, and edits/deletes only count when they come from
   ids are matched on their own, channel ids are namespaced per chat.
 - Protected / no-forward content still works, because media is re-sent from its
   `file_id` instead of being forwarded.
-- If a deletion notice matches nothing in the cache, the log gets
+- **Deletes are only reported when the id is in the cache.** A delete update
+  carries no sender, so an id we never saw could be anyone's — including yours.
+  Those are ignored by default (not even a "no cached content" line, which used
+  to look like your own deletions were being logged). Set
+  `LOG_UNKNOWN_DELETES=1` to report them as
   `[DELETED] Message ID: <id> — no cached content`.
 - All handler exceptions are swallowed and printed; permission errors never
   crash the bot.
