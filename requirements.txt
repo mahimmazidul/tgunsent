@@ -1,12 +1,15 @@
-# Pyrofork: maintained fork of Pyrogram. Same `import pyrogram`, same API,
-# and it accepts lang_pack / system_lang_code natively. Needs Python >= 3.10.
-pyrofork==2.3.69
-# AES speedup. tgcrypto-pyrofork provides the same `tgcrypto` module.
-tgcrypto-pyrofork
+# Kurigram: actively maintained Pyrogram fork. Same `import pyrogram`, same API,
+# so main.py runs unchanged. Layer 229 vs 158 in abandoned Pyrogram.
+# https://pypi.org/project/kurigram/
+kurigram==2.2.26
+tgcrypto
 python-dotenv
 
-# Alternative: swap the two lines above for stock Pyrogram (unmaintained since
-# 2023, and it cannot send lang_pack at all). Do NOT install both at once, they
-# both ship a package called "pyrogram".
-# pyrogram==2.0.106
-# tgcrypto
+# --- alternatives: install exactly ONE of these, never two at once ----------
+# they all ship a package called "pyrogram" and will overwrite each other.
+#
+#   pyrofork==2.3.69    archived Dec 2025, layer 220 (frozen, still works)
+#   pyrogram==2.0.106   abandoned Apr 2023, layer 158 (oldest)
+#
+# Telethon (layer 229, most active project) is NOT a drop-in: it has its own
+# API, so main.py would need a port. See README.

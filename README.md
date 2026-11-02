@@ -64,32 +64,48 @@ If you want generated, randomised official-client fingerprints for every field,
 that is what [opentele2](https://github.com/thedemons/opentele) does — but it is
 Telethon-based, so it cannot be mixed into this script.
 
-## Pyrofork vs Pyrogram
+## Which library to use
 
-`requirements.txt` installs **Pyrofork** (`pyrofork==2.3.69`), a maintained fork
-of Pyrogram. It installs the same `pyrogram` package, so `main.py` needs no
-changes; it just adds `lang_pack` / `system_lang_code` as real `Client`
-arguments, plus topics, stories, quote replies and an optional Mongo session
-store. Notes:
+`requirements.txt` installs **kurigram** — an actively maintained fork of
+Pyrogram. It ships the same `pyrogram` package and API, so `main.py` runs
+unchanged; it just keeps the MTProto layer current.
 
-- **Do not install both libraries in one venv** — each ships a package named
-  `pyrogram` and they will overwrite each other.
-- Requires **Python >= 3.10**; use `tgcrypto-pyrofork` for the AES speedup.
-- Extra transitive dependency `pymediainfo-pyrofork` (pure Python, used only for
-  media groups / paid media).
-- The upstream GitHub repo was **archived in mid-2026** and the last PyPI release
-  is 2.3.69 (Dec 2025), so treat it as frozen rather than actively developed.
-- Pin and verify if you care about supply chain:
-  `pyrofork==2.3.69 --hash=sha256:13f7a7fbfa5ede230df6b6df10fcc2c6b33b4c3d75bf2088a7d32f41621df8e4`
-  (the wheel published on PyPI).
+| Library | API | State (Nov 2026) | MTProto layer | This script |
+| --- | --- | --- | --- | --- |
+| **kurigram 2.2.26** | Pyrogram | active — commits Oct 2026, PyPI Sep 2026 | **229** | works as-is |
+| Telethon 1.45.0 | Telethon | most active — moved to [Codeberg](https://codeberg.org/Lonami/Telethon), layer 232 on master | 229+ | needs a port |
+| pyrofork 2.3.69 | Pyrogram | archived mid-2026, frozen | 220 | works as-is |
+| hydrogram | Pyrogram | repo active, PyPI stale (0.2.0, 2024) | 158 | untested |
+| pyrogram 2.0.106 | Pyrogram | abandoned since Apr 2023 | 158 | works as-is |
 
-A static review of that wheel found no backdoor: the only outbound socket is
-`asyncio.open_connection` in `connection/transport/tcp/tcp.py`, aimed at
-Telegram DC addresses (or your own proxy); there are no reads of `os.environ` or
-`~`, no `eval`/`exec`/`subprocess`/`pickle`, no HTTP client, no bundled
-binaries, and the crypto/session/storage modules differ from upstream Pyrogram
-only by licence headers and ordinary features. That is evidence, not a
-guarantee — read the source if your threat model demands it.
+Read that table carefully: **"archived on GitHub" does not mean dead.**
+Telethon's GitHub repo is archived only because development moved to Codeberg —
+it committed MTProto Layer 232 days ago and released 1.45.0 last month. Library
+code does not rot the moment it stops being updated; what actually ages is the
+MTProto layer, and old layers keep working for a long time.
+
+Practical advice:
+
+- **Want zero changes?** Stay on kurigram (`pip install kurigram tgcrypto`). All
+  four cases are tested against it.
+- **Want the most durable option?** Telethon — biggest project, newest layers,
+  releases every few weeks. Its `TelegramClient(...)` takes `device_model`,
+  `system_version`, `app_version`, `lang_code` and `system_lang_code` directly,
+  and `lang_pack` is one attribute assignment (`client._init_request.lang_pack =
+  "tdesktop"`), so the fingerprint above ports over cleanly. The handlers would
+  need rewriting (`events.NewMessage`, `events.MessageEdited`,
+  `events.MessageDeleted`, `events.Raw`), which is a single-file job.
+- **Install exactly one of them.** `kurigram`, `pyrofork` and `pyrogram` all
+  install a package named `pyrogram` and silently overwrite each other. Telethon
+  can coexist, but do not run both against the same session.
+- If a supply chain matters to you, pin with a hash: `pip install
+  kurigram==2.2.26 --hash=sha256:...` (see `pip download`).
+
+A static review of pyrofork 2.3.69 found no backdoor: the only outbound socket is
+`asyncio.open_connection` in the TCP transport, aimed at Telegram DC addresses
+(or your own proxy); no `os.environ` reads, no `eval`/`exec`/`subprocess`/`pickle`,
+no HTTP client, no bundled binaries. The same lineage applies to kurigram, which
+is a smaller diff on top of Pyrogram — treat it as evidence, not a guarantee.
 
 ## Files
 
