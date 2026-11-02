@@ -148,6 +148,47 @@ you have no posting rights. If posting fails you will see
 are never logged, and edits/deletes only count when they come from
 `TARGET_USER_ID`.
 
+## Updating the running bot
+
+`git pull` only changes files on disk — the running process keeps using the code
+it loaded at start. Stop, pull, start:
+
+```bash
+cd /path/to/tgunsent          # your project folder
+
+# 1. stop it (this sends [STOPPED] to the log chat, then disconnects)
+tmux kill-session -t userbot
+
+# 2. pull the new code
+git pull
+
+# 3. only if requirements.txt changed
+source .venv/bin/activate && pip install -r requirements.txt
+
+# 4. start it again
+tmux new -d -s userbot 'cd /path/to/tgunsent && .venv/bin/python main.py'
+tmux ls                                  # confirm it is running
+```
+
+Check the update landed before restarting:
+
+```bash
+git log --oneline -3
+git rev-parse --short HEAD               # compare with the commit you expected
+```
+
+If `git pull` refuses because you edited `main.py` locally, either keep your edits
+(`git stash && git pull && git stash pop`) or throw them away
+(`git checkout -- main.py && git pull`). `.env`, `cache.json` and
+`userbot.session` are gitignored, so a pull never touches your secrets, cache or
+login.
+
+Watching it after a restart:
+
+```bash
+tmux attach -t userbot                   # Ctrl+B then D to detach again
+```
+
 ## Files
 
 | File | Purpose |
