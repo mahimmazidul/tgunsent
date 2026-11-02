@@ -9,7 +9,7 @@ import json
 import os
 
 from dotenv import load_dotenv
-from pyrogram import Client, enums
+from pyrogram import Client, enums, raw
 
 
 load_dotenv()
@@ -224,6 +224,64 @@ async def on_edited_message(client, message):
             entry["text"] = after
     except Exception as error:
         print(f"[case 2] skipped: {error}")
+
+
+# --------------------------------------------------------------------------- #
+# CASE 4: deletion -> edit the cached log message, prefix it with [DELETED]
+# --------------------------------------------------------------------------- #
+async def mark_deleted(key):
+    """Edit the log message we own so the deletion shows up in place."""
+    entry = cache.get(key)
+    if not entry or entry.get("deleted"):
+        return
+    entry["deleted"] = True
+    was = entry.get("text") or "media"
+    try:
+        if entry.get("kind") == "text":
+            await app.edit_message_text(
+                entry["log_chat"], entry["log_id"], f"[DELETED]\nContent was: {was}"[:4096]
+            )
+        else:
+            # A media log message only accepts caption edits.
+            await app.edit_message_caption(
+                entry["log_chat"], entry["log_id"], f"[DELETED] Content was: {was}"[:1024]
+            )
+    except Exception as error:
+        # Too old / not editable / no permission: fall back to a fresh message.
+        print(f"[case 4] edit failed ({error}), sending a new message")
+        await send_log(f"[DELETED]\nContent was: {was}")
+
+
+@app.on_raw_update(group=1)
+async def on_raw_update(client, update, users, chats):
+    """CASE 4: Telegram never names the deleter; we only match ids from our cache."""
+    try:
+        ids = list(getattr(update, "messages", []) or [])
+        if isinstance(update, raw.types.UpdateDeleteChannelMessages):
+            prefix = f"-100{update.channel_id}"
+            matched = {mid: f"{prefix}:{mid}" for mid in ids if f"{prefix}:{mid}" in cache}
+        elif isinstance(update, raw.types.UpdateDeleteMessages):
+            # No peer information at all: match on the message id alone. We only
+            # watch one user, so if the id is in our cache it is theirs.
+            wanted = set(ids)
+            matched = {}
+            for cached_key in list(cache.keys()):
+                try:
+                    mid = int(cached_key.rsplit(":", 1)[1])
+                except (IndexError, ValueError):
+                    continue
+                if mid in wanted:
+                    matched[mid] = cached_key
+        else:
+            return
+
+        for key in matched.values():
+            await mark_deleted(key)
+        for mid in ids:
+            if mid not in matched:
+                await send_log(f"[DELETED] Message ID: {mid} — no cached content")
+    except Exception as error:
+        print(f"[case 4] skipped: {error}")
 
 
 if __name__ == "__main__":
