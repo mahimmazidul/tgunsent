@@ -1,16 +1,30 @@
+#!/usr/bin/env python3
 """
 Single-file Pyrogram userbot that watches ONE target user (TARGET_USER_ID) and
 re-publishes what they do into LOG_CHAT_ID as log messages that THIS account
 owns, so those log messages can always be edited later.
-"""
 
+Ideas borrowed from the two reference projects:
+  * kawaiiDango/telegram-delete-logger -> keep an id-keyed cache of everything
+    we saw (text / media) so a bare delete update can be resolved afterwards.
+  * phishdestroy/TgWitness            -> capture the content yourself instead of
+    relying on Telegram forwarding, so "protected content" stops mattering.
+
+CASE 1  new text message        -> "[NEW] <text>"
+CASE 2  edited message          -> "[EDITED] Before: ... / After: ..."
+CASE 3  photo/video/document    -> media re-sent with caption "[NEW - photo]"
+CASE 4  message deleted         -> the cached log message is edited and
+                                   prefixed with "[DELETED]"
+
+There is no forward_messages() call anywhere in this file: every log message is
+a brand new message we send ourselves, using a file_id for media.
+"""
 
 import json
 import os
 
 from dotenv import load_dotenv
 from pyrogram import Client, enums, raw
-
 
 load_dotenv()
 
@@ -19,9 +33,7 @@ API_HASH = (os.getenv("API_HASH") or "").strip()
 TARGET_USER_ID = int(os.getenv("TARGET_USER_ID") or 0)
 LOG_CHAT_ID = int(os.getenv("LOG_CHAT_ID") or 0)
 
-
 CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache.json")
-
 
 # Realistic Telegram Desktop headers. Default Pyrogram headers are fingerprinted.
 CLIENT_HEADERS = {
@@ -38,11 +50,9 @@ except TypeError:
     CLIENT_HEADERS.pop("system_lang_code", None)
     app = Client("userbot", api_id=API_ID, api_hash=API_HASH, **CLIENT_HEADERS)
 
-
 # Primary cache: "<namespace>:<message_id>" -> entry dict.
 # cache.json is only a mirror; this dict is what the bot reads from.
 cache = {}
-
 
 # Media kinds we can re-send straight from a file_id, mapped to the client method.
 MEDIA_METHODS = {
@@ -299,9 +309,17 @@ async def on_raw_update(client, update, users, chats):
         print(f"[case 4] skipped: {error}")
 
 
+# --------------------------------------------------------------------------- #
+# startup
+# --------------------------------------------------------------------------- #
 if __name__ == "__main__":
+    if not (API_ID and API_HASH and TARGET_USER_ID and LOG_CHAT_ID):
+        raise SystemExit(
+            "Fill API_ID, API_HASH, TARGET_USER_ID and LOG_CHAT_ID in .env first."
+        )
     print("WARNING: automating a user account can get it restricted or banned by "
           "Telegram. Use only on an account you can afford to lose.")
     load_cache()
     print(f"Loaded {len(cache)} cached message(s) from {CACHE_FILE}")
+    print(f"Tracking user {TARGET_USER_ID} -> log chat {LOG_CHAT_ID}")
     app.run()
