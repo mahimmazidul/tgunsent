@@ -1,31 +1,45 @@
 # tgunsent
 
-A small Pyrogram user client that forwards messages from one configured Telegram user to a private log chat, reports edits, and attempts to label forwarded messages when deletion notices arrive.
+Minimal Pyrogram userbot that watches **one** user (`TARGET_USER_ID`) and logs
+their activity into `LOG_CHAT_ID`: new text (`[NEW]`), edits (`[EDITED]` with
+before/after), photos/videos/documents (re-sent with a `[NEW - photo]` caption)
+and deletions (`[DELETED]` edited onto the log message we own).
 
-## Setup
+Nothing is ever forwarded — every log message is re-sent by this account, so it
+can always be edited later. Content is cached in `cache.json` (stdlib `json`),
+which survives restarts and lets a bare delete update be resolved backwards.
 
-1. Obtain `API_ID` and `API_HASH` from [my.telegram.org](https://my.telegram.org/apps). Create a private log chat and obtain its numeric chat ID; use a chat only you can access.
-2. Copy `.env.example` to `.env` and set the API credentials, `TARGET_USER_ID`, and `LOG_CHAT_ID`. IDs are numeric; group IDs are typically negative.
-3. Run on a seedbox without root:
+## Run on a seedbox (no root)
 
 ```bash
+cp .env.example .env && nano .env     # fill API_ID, API_HASH, TARGET_USER_ID, LOG_CHAT_ID
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env && nano .env
-screen -S tgunsent
-python main.py
+screen -S userbot
+python main.py                        # first run: phone, login code, 2FA password
+# detach: Ctrl+A then D — reattach later with: screen -r userbot
 ```
 
-Sign in interactively the first time. Detach from screen with Ctrl+A, D; reattach with `screen -r tgunsent`.
+## Files
 
-## Important limitations
+| File | Purpose |
+| --- | --- |
+| `main.py` | The whole bot (flat functions, one handler per case). |
+| `.env` | Secrets; never commit it. |
+| `cache.json` | Message cache, written after every change. |
+| `userbot.session` | Pyrogram's SQLite login session; keep it private. |
 
-- The client captures messages it sees while running; it cannot recover content it never observed. It watches accessible chats, not Secret Chats.
-- The message cache is in memory and is lost on restart. Pyrogram saves authentication separately in `username.session` (a SQLite-backed session file). Protect both that file and `.env`; neither belongs in Git.
-- Telegram generally does not allow editing forwarded messages, so the `[DELETED]` label usually cannot be added. The forwarded copy remains if it was successfully delivered. Deletion notifications may be missing and do not say who deleted the message.
-- Protected content or insufficient permissions can prevent forwarding. Telegram rate limits are respected; delivery is not guaranteed. Pyrogram is no longer actively maintained, and no client can guarantee an account won't be restricted.
-- Use only where you have permission to retain the messages. Do not share your API credentials, session file or GitHub tokens.
+## Notes
 
-## Owner
-
-Repository: [mahimmazidul/tgunsent](https://github.com/mahimmazidul/tgunsent).
+- Telegram does not say *who* deleted a message. The bot only watches one user,
+  so a cached id is enough to attribute it.
+- Delete notices may arrive without any peer information (private chats); those
+  ids are matched on their own, channel ids are namespaced per chat.
+- Protected / no-forward content still works, because media is re-sent from its
+  `file_id` instead of being forwarded.
+- If a deletion notice matches nothing in the cache, the log gets
+  `[DELETED] Message ID: <id> — no cached content`.
+- All handler exceptions are swallowed and printed; permission errors never
+  crash the bot.
+- Automating a user account can get it restricted or banned. Use an account you
+  can afford to lose, and only log chats you are allowed to keep.
