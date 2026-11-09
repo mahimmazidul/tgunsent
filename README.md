@@ -334,6 +334,42 @@ the reaction counters changed. The bot filters those out in two ways:
 
 Genuine edits are unaffected, including caption edits on media.
 
+## When it dies: `AuthKeyNotFound` / "session revoked"
+
+```
+pyrogram.session.session.AuthKeyNotFound: Auth key not found in the system.
+```
+
+Telegram invalidated this session's key. Nothing recovers from it — the auth key
+is dead server-side, and retrying just loops. It happens when:
+
+- the session is terminated from **Settings → Devices** (by you, or someone with
+  access to the account),
+- the same `userbot.session` is copied to another server/IP and used from both,
+- the account was deactivated or restricted.
+
+Recovery:
+
+```bash
+tmux kill-session -t userbot
+rm -f userbot.session userbot.session-journal
+tmux new -d -s userbot 'cd /path/to/tgunsent && .venv/bin/python main.py'
+tmux attach -t userbot        # enter phone, login code, 2FA password
+```
+
+Never copy `userbot.session` between machines — each machine logs in once and
+keeps its own file. Then check Settings → Devices: if you did not terminate that
+session, someone else did, and you should change your 2FA password.
+
+The bot handles both failure shapes itself:
+
+- **At startup**, a revoked key prints the three lines above instead of a
+  traceback and exits with code 1.
+- **Mid-run**, a dead session triggers `on_disconnect`, which posts
+  `[STOPPED] forwarding stopped (connection lost)` if it still can and exits with
+  code 1, so `systemd Restart=always` or a supervisor restarts it. Without that
+  the process would stay alive doing nothing — the worst failure mode.
+
 ## Notes
 
 - Telegram does not say *who* deleted a message. The bot only watches one user,

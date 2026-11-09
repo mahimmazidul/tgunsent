@@ -4,9 +4,26 @@ import asyncio
 import json
 import os
 import signal
+import sys
 
 from dotenv import load_dotenv
-from pyrogram import Client, enums, raw, utils
+from pyrogram import Client, enums, errors, raw, utils
+
+try:  # transport-level: the session's auth key was revoked server side
+    from pyrogram.session.session import AuthKeyNotFound
+except Exception:  # pragma: no cover - older/newer layouts
+    AuthKeyNotFound = None
+
+# Anything that means "this session can never work again without a new login".
+AUTH_ERRORS = tuple(error for error in (
+    AuthKeyNotFound,
+    getattr(errors, "AuthKeyUnregistered", None),
+    getattr(errors, "AuthKeyDuplicated", None),
+    getattr(errors, "SessionRevoked", None),
+    getattr(errors, "UserDeactivated", None),
+    getattr(errors, "UserDeactivatedBan", None),
+    getattr(errors, "Unauthorized", None),
+) if isinstance(error, type))
 
 load_dotenv()
 
@@ -494,20 +511,48 @@ async def on_raw_update(client, update, users, chats):
 # --------------------------------------------------------------------------- #
 # lifecycle notice: "[STOPPED] forwarding stopped" on a graceful shutdown
 # --------------------------------------------------------------------------- #
+LIFECYCLE = {"stop": None, "reason": "shutdown", "by_signal": False}
+
+
+@app.on_disconnect()
+async def on_disconnect_handler(client):
+    """
+    Fires when the session dies on its own (revoked auth key, network gone).
+    Without this the process would sit there alive but doing nothing, which is
+    the worst failure mode: no restart, no logs, no forwarding.
+    """
+    if LIFECYCLE["by_signal"]:
+        return  # our own graceful stop
+    LIFECYCLE["reason"] = "connection lost"
+    print("[session] disconnected unexpectedly - exiting so a supervisor "
+          "(systemd Restart=always / tmux) can start a fresh one")
+    if LIFECYCLE["stop"] is not None:
+        LIFECYCLE["stop"].set()
+
+
 async def serve():
-    """
-    Start the client, wait for a stop signal, announce it while still connected,
-    then stop. A hard kill cannot reach this code, so nothing is sent then.
-    """
-    await app.start()
+    """Start, wait for a stop signal or a dead session, then shut down cleanly."""
+    try:
+        await app.start()
+    except AUTH_ERRORS as error:
+        print(f"[auth] Telegram rejected this session: {type(error).__name__}: {error}")
+        print("[auth] Delete userbot.session (and any userbot.session-journal), then "
+              "run main.py again and log in with your phone, code and 2FA password.")
+        print("[auth] If that keeps happening, check Telegram > Settings > Devices: "
+              "the session may have been terminated from another device.")
+        await _safe_stop()
+        raise SystemExit(1)
 
     if NOTIFY_ON_START:
         await send_log("[STARTED] forwarding resumed")
 
     stop = asyncio.Event()
+    LIFECYCLE["stop"] = stop
+    LIFECYCLE["by_signal"] = False
     fired = {"name": "shutdown"}
 
     def on_signal(signum, _frame=None):
+        LIFECYCLE["by_signal"] = True
         fired["name"] = signal.Signals(signum).name
         stop.set()
 
@@ -521,10 +566,21 @@ async def serve():
     try:
         await stop.wait()
     finally:
+        reason = fired["name"] if LIFECYCLE["by_signal"] else LIFECYCLE["reason"]
         if NOTIFY_ON_STOP:
-            # Sent before the client goes away; skipped if the network is gone.
-            await send_log(f"[STOPPED] forwarding stopped ({fired['name']})")
+            # Best effort: on a dead connection this fails and is swallowed.
+            await send_log(f"[STOPPED] forwarding stopped ({reason})")
+        await _safe_stop()
+
+    if not LIFECYCLE["by_signal"]:
+        raise SystemExit(1)  # let systemd/tmux restart us
+
+
+async def _safe_stop():
+    try:
         await app.stop()
+    except Exception as error:
+        print(f"[lifecycle] stop failed: {error}")
 
 
 # --------------------------------------------------------------------------- #
@@ -547,4 +603,9 @@ if __name__ == "__main__":
         print("DEBUG is on: every message prints chat=<id> from=<user id>. Send "
               "something in the group you want to log to, then copy chat=<id> "
               "into LOG_CHAT_ID.")
-    app.loop.run_until_complete(serve())
+    try:
+        app.loop.run_until_complete(serve())
+    except KeyboardInterrupt:
+        print("\nStopped.")
+    except SystemExit as exit_error:
+        sys.exit(exit_error.code)
