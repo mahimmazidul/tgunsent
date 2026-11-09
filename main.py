@@ -66,6 +66,11 @@ TARGET_USER_ID = next(iter(TARGETS), 0)  # kept for the startup banner
 # how you discover TARGET_USER_ID and LOG_CHAT_ID. Off by default.
 DEBUG = (os.getenv("DEBUG") or "").strip().lower() in ("1", "true", "yes", "on")
 
+# Optional Bot API token (@BotFather). A userbot whose auth key was revoked can
+# no longer send anything, so fatal/stall notices are delivered through this
+# separate bot identity instead. The bot must be a member of LOG_CHAT_ID.
+BOT_TOKEN = (os.getenv("BOT_TOKEN") or "").strip()
+
 # A delete update carries no sender. If the id is not in our cache we cannot know
 # whose message it was, so by default nothing is written (otherwise your own
 # deletions get reported as if they were the target's). Set to 1 to log
@@ -258,6 +263,41 @@ async def send_log(text):
     except Exception as error:
         print(f"[log] send failed: {error}")
         return None
+
+
+async def notify_via_bot(text):
+    """
+    Send through a bot token instead of the user account.
+
+    Bot auth is independent of the user session's auth key, so this still works
+    when the user session was revoked - which is exactly when a notice matters.
+    Returns True when delivered.
+    """
+    if not BOT_TOKEN:
+        return False
+    try:
+        notifier = Client(
+            "notifier",
+            api_id=API_ID,
+            api_hash=API_HASH,
+            bot_token=BOT_TOKEN,
+            in_memory=True,
+            no_updates=True,
+        )
+        async with notifier:
+            await notifier.send_message(LOG_CHAT_ID, text[:4096])
+        dbg(f"notified via bot: {text[:60]!r}")
+        return True
+    except Exception as error:
+        print(f"[notify] bot fallback failed: {error}")
+        return False
+
+
+async def announce(text):
+    """User session first; the bot identity if that is dead too."""
+    if await send_log(text) is not None:
+        return True
+    return await notify_via_bot(text)
 
 
 async def send_media_log(kind, file_id, caption):
@@ -540,6 +580,11 @@ async def serve():
               "run main.py again and log in with your phone, code and 2FA password.")
         print("[auth] If that keeps happening, check Telegram > Settings > Devices: "
               "the session may have been terminated from another device.")
+        # The user session cannot send anything, so try the bot identity.
+        await notify_via_bot(
+            "[FATAL] userbot session is invalid (auth key revoked). "
+            "Forwarding has stopped - log in again on the server."
+        )
         await _safe_stop()
         raise SystemExit(1)
 
@@ -568,8 +613,9 @@ async def serve():
     finally:
         reason = fired["name"] if LIFECYCLE["by_signal"] else LIFECYCLE["reason"]
         if NOTIFY_ON_STOP:
-            # Best effort: on a dead connection this fails and is swallowed.
-            await send_log(f"[STOPPED] forwarding stopped ({reason})")
+            # Best effort: on a dead connection this fails and is swallowed, so
+            # fall back to the bot identity if one is configured.
+            await announce(f"[STOPPED] forwarding stopped ({reason})")
         await _safe_stop()
 
     if not LIFECYCLE["by_signal"]:
@@ -599,6 +645,8 @@ if __name__ == "__main__":
     watched = ", ".join(f"{nick} ({uid})" for uid, nick in TARGETS.items())
     print(f"Tracking {len(TARGETS)} user(s): {watched}")
     print(f"Log chat: {LOG_CHAT_ID}")
+    if BOT_TOKEN:
+        print("BOT_TOKEN set: fatal/stall notices also go out through the bot.")
     if DEBUG:
         print("DEBUG is on: every message prints chat=<id> from=<user id>. Send "
               "something in the group you want to log to, then copy chat=<id> "

@@ -361,6 +361,29 @@ Never copy `userbot.session` between machines — each machine logs in once and
 keeps its own file. Then check Settings → Devices: if you did not terminate that
 session, someone else did, and you should change your 2FA password.
 
+### Getting a notice when the key is revoked
+
+A dead auth key means the user session **cannot send anything at all** — every
+RPC, including `SendMessage`, is rejected. So the log-chat notice needs a
+different identity:
+
+```env
+BOT_TOKEN=123456:ABC-DEF...      # from @BotFather
+```
+
+Add that bot to `LOG_CHAT_ID` as a member (admin for a channel), and fatal
+notices arrive through it even when the user session is revoked:
+
+```
+[FATAL] userbot session is invalid (auth key revoked). Forwarding has stopped - log in again on the server.
+[STOPPED] forwarding stopped (connection lost)
+```
+
+Order of attempts: user session first, bot identity only if that fails — so no
+extra round-trip in normal operation. `BOT_TOKEN` is optional and stays an empty
+no-op if unset. With it configured, a revoked key becomes visible in the log chat
+instead of only in a tmux window nobody is watching.
+
 The bot handles both failure shapes itself:
 
 - **At startup**, a revoked key prints the three lines above instead of a
