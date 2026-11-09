@@ -393,6 +393,25 @@ The bot handles both failure shapes itself:
   code 1, so `systemd Restart=always` or a supervisor restarts it. Without that
   the process would stay alive doing nothing — the worst failure mode.
 
+## Health watchdog
+
+Every `WATCHDOG_INTERVAL` seconds (default 60) the bot sends a cheap
+`updates.GetState` probe:
+
+- **Probe answers** → nothing happens, counter reset.
+- **`WATCHDOG_MISSES` probes fail in a row** (default 3) → the session is
+  considered dead, `[STOPPED] forwarding stopped (connection lost)` is posted if
+  possible, and the process exits 1 so a supervisor restarts it.
+- **An auth error** (`AuthKeyNotFound`, `SessionRevoked`, …) → exits at once.
+
+This exists because a revoked auth key makes every RPC time out silently. Without
+the probe the process stays alive, keeps retrying forever and logs nothing — you
+saw exactly that: `[10] Retrying "updates.GetState" … Request timed out`.
+
+A single blip is harmless: Pyrogram reconnects on its own and the counter resets.
+The `on_disconnect` handler deliberately does **not** exit, because
+`Session.restart()` fires it on every reconnect.
+
 ## Notes
 
 - Telegram does not say *who* deleted a message. The bot only watches one user,

@@ -71,6 +71,18 @@ DEBUG = (os.getenv("DEBUG") or "").strip().lower() in ("1", "true", "yes", "on")
 # separate bot identity instead. The bot must be a member of LOG_CHAT_ID.
 BOT_TOKEN = (os.getenv("BOT_TOKEN") or "").strip()
 
+# Health probe: if the session cannot answer for WATCHDOG_MISSES probes in a row,
+# it is dead (e.g. a revoked auth key makes every RPC time out) and the process
+# exits so a supervisor can restart it.
+try:
+    WATCHDOG_INTERVAL = max(1, int(os.getenv("WATCHDOG_INTERVAL") or 60))
+except ValueError:
+    WATCHDOG_INTERVAL = 60
+try:
+    WATCHDOG_MISSES = max(1, int(os.getenv("WATCHDOG_MISSES") or 3))
+except ValueError:
+    WATCHDOG_MISSES = 3
+
 # A delete update carries no sender. If the id is not in our cache we cannot know
 # whose message it was, so by default nothing is written (otherwise your own
 # deletions get reported as if they were the target's). Set to 1 to log
@@ -555,19 +567,48 @@ LIFECYCLE = {"stop": None, "reason": "shutdown", "by_signal": False}
 
 
 @app.on_disconnect()
-async def on_disconnect_handler(client):
+async def on_disconnect_handler(client, *args):
     """
-    Fires when the session dies on its own (revoked auth key, network gone).
-    Without this the process would sit there alive but doing nothing, which is
-    the worst failure mode: no restart, no logs, no forwarding.
+    Fires whenever a session is torn down - including automatic reconnects, since
+    Session.restart() calls _stop(). It therefore logs only: deciding "the bot is
+    dead" from here would kill the process on a single network blip. The watchdog
+    below does that job.
+
+    Pyrogram calls this as disconnect_handler(client, session); the extra
+    argument MUST be accepted or every disconnect raises TypeError, which breaks
+    interactive login (temporary sessions are closed during it).
     """
-    if LIFECYCLE["by_signal"]:
-        return  # our own graceful stop
-    LIFECYCLE["reason"] = "connection lost"
-    print("[session] disconnected unexpectedly - exiting so a supervisor "
-          "(systemd Restart=always / tmux) can start a fresh one")
-    if LIFECYCLE["stop"] is not None:
-        LIFECYCLE["stop"].set()
+    try:
+        dbg(f"session disconnected: {type(args[0]).__name__ if args else 'client'}")
+    except Exception as error:
+        print(f"[session] disconnect handler error: {error}")
+
+
+async def watch_session():
+    """Probe the connection; give up (exit) after repeated failures."""
+    misses = 0
+    while True:
+        await asyncio.sleep(WATCHDOG_INTERVAL)
+        try:
+            await asyncio.wait_for(
+                app.invoke(raw.functions.updates.GetState()), timeout=WATCHDOG_INTERVAL
+            )
+            misses = 0
+            continue
+        except AUTH_ERRORS as error:
+            LIFECYCLE["reason"] = f"session invalid ({type(error).__name__})"
+            print(f"[watchdog] {LIFECYCLE['reason']} - exiting")
+            LIFECYCLE["stop"].set()
+            return
+        except Exception as error:
+            misses += 1
+            dbg(f"watchdog probe failed ({misses}/{WATCHDOG_MISSES}): {error}")
+            if misses >= WATCHDOG_MISSES:
+                LIFECYCLE["reason"] = "connection lost"
+                print(f"[watchdog] no answer after {misses} probes - exiting so a "
+                      f"supervisor can restart it")
+                LIFECYCLE["stop"].set()
+                return
 
 
 async def serve():
@@ -591,6 +632,8 @@ async def serve():
     if NOTIFY_ON_START:
         await send_log("[STARTED] forwarding resumed")
 
+    probe = asyncio.create_task(watch_session())
+
     stop = asyncio.Event()
     LIFECYCLE["stop"] = stop
     LIFECYCLE["by_signal"] = False
@@ -611,6 +654,7 @@ async def serve():
     try:
         await stop.wait()
     finally:
+        probe.cancel()
         reason = fired["name"] if LIFECYCLE["by_signal"] else LIFECYCLE["reason"]
         if NOTIFY_ON_STOP:
             # Best effort: on a dead connection this fails and is swallowed, so
