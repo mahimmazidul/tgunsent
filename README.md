@@ -43,7 +43,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 screen -S userbot
 python main.py                        # first run: phone, login code, 2FA password
-# detach: Ctrl+A then D — reattach later with: screen -r userbot
+# detach: Ctrl+A then D — reattach later with: screen -r system
 ```
 
 ## Client fingerprint
@@ -157,7 +157,7 @@ it loaded at start. Stop, pull, start:
 cd /path/to/tgunsent                    # wherever you cloned it
 
 # 1. stop it (this sends [STOPPED] to the log chat, then disconnects)
-tmux kill-session -t userbot
+tmux kill-session -t system
 
 # 2. pull the new code
 git pull
@@ -166,7 +166,7 @@ git pull
 source .venv/bin/activate && pip install -r requirements.txt
 
 # 4. start it again
-tmux new -d -s userbot 'cd /path/to/tgunsent && .venv/bin/python main.py'
+tmux new -d -s system 'cd /path/to/tgunsent && .venv/bin/python main.py'
 tmux ls                                  # confirm it is running
 ```
 
@@ -186,7 +186,7 @@ login.
 Watching it after a restart:
 
 ```bash
-tmux attach -t userbot                   # Ctrl+B then D to detach again
+tmux attach -t system                    # Ctrl+B then D to detach again
 ```
 
 ## Files
@@ -290,8 +290,8 @@ tmux attach -t system                   # look at it (Ctrl+B then D to detach)
 The `screen` equivalent, if that is all the box has:
 
 ```bash
-screen -dmS userbot python main.py
-screen -r userbot
+screen -dmS system python main.py
+screen -r system
 ```
 
 Neither restarts a crashed process. For that, use `systemd --user`, which is more
@@ -351,10 +351,10 @@ is dead server-side, and retrying just loops. It happens when:
 Recovery:
 
 ```bash
-tmux kill-session -t userbot
+tmux kill-session -t system
 rm -f userbot.session userbot.session-journal
-tmux new -d -s userbot 'cd /path/to/tgunsent && .venv/bin/python main.py'
-tmux attach -t userbot        # enter phone, login code, 2FA password
+tmux new -d -s system 'cd /path/to/tgunsent && .venv/bin/python main.py'
+tmux attach -t system         # enter phone, login code, 2FA password
 ```
 
 Never copy `userbot.session` between machines — each machine logs in once and
