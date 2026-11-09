@@ -282,9 +282,9 @@ Both survive SSH drops; **tmux** is the better choice (actively maintained, real
 scrollback, panes, scriptable):
 
 ```bash
-tmux new -d -s userbot 'python main.py'   # start detached
+tmux new -d -s system 'python main.py'   # start detached
 tmux ls                                   # is it running?
-tmux attach -t userbot                    # look at it (Ctrl+B then D to detach)
+tmux attach -t system                   # look at it (Ctrl+B then D to detach)
 ```
 
 The `screen` equivalent, if that is all the box has:
