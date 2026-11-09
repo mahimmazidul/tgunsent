@@ -412,6 +412,32 @@ A single blip is harmless: Pyrogram reconnects on its own and the counter resets
 The `on_disconnect` handler deliberately does **not** exit, because
 `Session.restart()` fires it on every reconnect.
 
+## Duplicate deliveries (and why logs never double up now)
+
+Telegram re-sends updates it thinks you missed — after a reconnect, and through
+kurigram's gap recovery. The same message id can therefore reach the handler two
+or three times. Telegram message ids are unique per chat, so the bot treats a
+cached id as "already logged" and skips it:
+
+```
+[dbg] skip id=42766: already logged as basic:42766 (duplicate update)
+```
+
+Because `cache.json` holds those ids, duplicates are also suppressed across
+restarts. The same rule keeps duplicate edit updates from producing a second
+`[EDITED]` block. A send that *fails* is not cached, so a later retry still works.
+
+If you still see duplicates in the log chat, it is not re-delivery — it is almost
+always **two processes on one session file**:
+
+```bash
+pgrep -af main.py          # must show exactly one pid
+tmux ls                    # plus any leftover session
+```
+
+Each process has its own cache, so they cannot dedupe each other. The startup
+banner now prints `Started as pid <n>` so you can compare.
+
 ## Notes
 
 - Telegram does not say *who* deleted a message. The bot only watches one user,

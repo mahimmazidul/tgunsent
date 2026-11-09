@@ -425,6 +425,11 @@ async def on_new_message(client, message):
             return
         dbg(f"watched user {sender} -> nickname {who!r}")
         key = cache_key(message.chat, message.id)
+        if key in cache:
+            # Telegram re-delivers updates after a reconnect (gap recovery), and
+            # ids are unique per chat, so a cached key means "already logged".
+            dbg(f"skip id={message.id}: already logged as {key} (duplicate update)")
+            return
         kind = media_kind_of(message)
         if kind:
             await log_new_media(message, key, kind, who)  # CASE 3
@@ -453,8 +458,9 @@ async def on_edited_message(client, message):
         if entry is not None:
             before = entry["text"]
             if before == after:
-                # Same text: a reaction, a pin, a view counter - not an edit.
-                dbg(f"skip edit id={message.id}: text unchanged (reaction or similar)")
+                # Same text: a reaction, a pin, a view counter, or a re-delivered
+                # duplicate of an edit we already logged.
+                dbg(f"skip edit id={message.id}: text unchanged (reaction or duplicate)")
                 return
         else:
             before = "(not in cache)"
@@ -687,6 +693,7 @@ if __name__ == "__main__":
     load_cache()
     print(f"Loaded {len(cache)} cached message(s) from {CACHE_FILE}")
     watched = ", ".join(f"{nick} ({uid})" for uid, nick in TARGETS.items())
+    print(f"Started as pid {os.getpid()} (only one copy may run per session file)")
     print(f"Tracking {len(TARGETS)} user(s): {watched}")
     print(f"Log chat: {LOG_CHAT_ID}")
     if BOT_TOKEN:
